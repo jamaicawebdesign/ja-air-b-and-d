@@ -1,0 +1,113 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Air B&D – Landlord Bookings</title>
+<style>
+  body{font-family:system-ui,sans-serif;margin:0;background:#f6f7f9;color:#222}
+  header{background:#ff5a5f;color:#fff;padding:12px 20px;display:flex;justify-content:space-between;align-items:center}
+  main{max-width:900px;margin:20px auto;padding:0 16px}
+  .card{background:#fff;border-radius:8px;padding:16px;margin:12px 0;box-shadow:0 1px 3px #0002}
+  input,textarea,button{font:inherit;padding:8px;margin:4px 0;border:1px solid #ccc;border-radius:6px}
+  button{background:#ff5a5f;color:#fff;border:0;cursor:pointer}
+  button.alt{background:#555}
+  .row{display:flex;gap:8px;flex-wrap:wrap}.row>*{flex:1;min-width:140px}
+  .err{color:#b00020}.tag{padding:2px 8px;border-radius:10px;background:#eee;font-size:.85em}
+  .confirmed{background:#c8f0d0}.pending{background:#fff0b3}.declined,.cancelled{background:#f4c7c7}
+  nav button{margin-right:6px}
+</style>
+</head>
+<body>
+<header><strong>Air B&amp;D</strong><div id="userbar"></div></header>
+<main>
+  <nav><button onclick="show('browse')">Browse stays</button><button onclick="show('dash')">Landlord dashboard</button></nav>
+  <p id="msg" class="err"></p>
+  <section id="browse"></section>
+  <section id="dash" hidden></section>
+</main>
+<script>
+let token = localStorage.token || '', user = JSON.parse(localStorage.user || 'null');
+const $ = (s) => document.querySelector(s);
+const esc = (s) => String(s).replace(/[&<>"']/g, (c) => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+
+async function api(method, url, body) {
+  const r = await fetch('/api' + url, {
+    method, headers: { 'Content-Type': 'application/json', ...(token && { Authorization: 'Bearer ' + token }) },
+    body: body && JSON.stringify(body),
+  });
+  const d = await r.json();
+  if (r.status === 401 && token) { token = ''; user = null; localStorage.clear(); bar(); }
+  if (!r.ok) throw new Error(d.error || 'Error');
+  return d;
+}
+const guard = (fn) => async (...a) => { $('#msg').textContent = ''; try { await fn(...a); } catch (e) { $('#msg').textContent = e.message; } };
+const form = (f) => Object.fromEntries(new FormData(f));
+
+function show(v) { $('#browse').hidden = v !== 'browse'; $('#dash').hidden = v !== 'dash'; (v === 'browse' ? loadBrowse : loadDash)(); }
+
+function bar() {
+  $('#userbar').innerHTML = user ? `${esc(user.name)} <button class="alt" onclick="logout()">Log out</button>` : '';
+}
+function logout() { token = ''; user = null; localStorage.clear(); bar(); show('dash'); }
+function setAuth(d) { token = d.token; user = d.user; localStorage.token = token; localStorage.user = JSON.stringify(user); bar(); }
+
+const loadBrowse = guard(async () => {
+  const props = await api('GET', '/properties');
+  const today = new Date().toISOString().slice(0, 10);
+  $('#browse').innerHTML = props.length ? props.map((p) => `
+    <div class="card"><h3>${esc(p.title)}</h3>
+      <div>${esc(p.location)} · $${p.pricePerNight}/night · up to ${p.maxGuests} guests</div>
+      <p>${esc(p.description)}</p>
+      <form onsubmit="book(event,'${p.id}')">
+        <div class="row">
+          <input name="guestName" placeholder="Your name" required>
+          <input name="guestEmail" type="email" placeholder="Email" required>
+          <input name="guests" type="number" min="1" max="${p.maxGuests}" value="1">
+        </div>
+        <div class="row"><input name="checkIn" type="date" min="${today}" required><input name="checkOut" type="date" min="${today}" required></div>
+        <button>Request booking</button> <span class="ok"></span>
+      </form></div>`).join('') : '<p>No properties listed yet.</p>';
+});
+window.book = guard(async (e, pid) => {
+  e.preventDefault();
+  const b = await api('POST', '/bookings', { ...form(e.target), propertyId: pid });
+  e.target.querySelector('.ok').textContent = `Requested! Total $${b.total}. Awaiting landlord confirmation.`;
+});
+
+const loadDash = guard(async () => {
+  const el = $('#dash');
+  if (!user) {
+    el.innerHTML = `<div class="card"><h3>Landlord login</h3>
+      <form id="login"><input name="email" type="email" placeholder="Email" required>
+      <input name="password" type="password" placeholder="Password (8+ chars)" required>
+      <button>Log in</button> <button type="button" class="alt" id="reg">Register</button>
+      <input name="name" placeholder="Name (for registering)"></form></div>`;
+    const f = $('#login');
+    f.onsubmit = guard(async (e) => { e.preventDefault(); setAuth(await api('POST', '/login', form(f))); loadDash(); });
+    $('#reg').onclick = guard(async () => { setAuth(await api('POST', '/register', form(f))); loadDash(); });
+    return;
+  }
+  const [props, bookings] = await Promise.all([api('GET', '/properties?mine=1'), api('GET', '/bookings')]);
+  el.innerHTML = `<div class="card"><h3>Add property</h3><form id="addp">
+    <input name="title" placeholder="Title" required><input name="location" placeholder="Location" required>
+    <textarea name="description" placeholder="Description" rows="2" style="width:100%"></textarea>
+    <div class="row"><input name="pricePerNight" type="number" min="1" step="0.01" placeholder="Price/night" required>
+    <input name="maxGuests" type="number" min="1" placeholder="Max guests" required></div><button>Add</button></form></div>
+    <h3>My properties</h3>${props.map((p) => `<div class="card">${esc(p.title)} – ${esc(p.location)} ($${p.pricePerNight}/night)
+      <button class="alt" onclick="delProp('${p.id}')">Delete</button></div>`).join('') || '<p>None yet.</p>'}
+    <h3>Bookings</h3>${bookings.map((b) => `<div class="card"><strong>${esc(b.propertyTitle)}</strong>
+      <span class="tag ${b.status}">${b.status}</span><br>${b.checkIn} → ${b.checkOut} · ${b.guests} guest(s) · $${b.total}<br>
+      ${esc(b.guestName)} (${esc(b.guestEmail)})<br>
+      ${b.status === 'pending' ? `<button onclick="setStatus('${b.id}','confirmed')">Confirm</button> <button class="alt" onclick="setStatus('${b.id}','declined')">Decline</button>` : ''}
+      ${b.status === 'confirmed' ? `<button class="alt" onclick="setStatus('${b.id}','cancelled')">Cancel</button>` : ''}</div>`).join('') || '<p>No bookings.</p>'}`;
+  const f = $('#addp');
+  f.onsubmit = guard(async (e) => { e.preventDefault(); await api('POST', '/properties', form(f)); loadDash(); });
+});
+window.delProp = guard(async (id) => { if (confirm('Delete property and its bookings?')) { await api('DELETE', '/properties/' + id); loadDash(); } });
+window.setStatus = guard(async (id, status) => { await api('PATCH', '/bookings/' + id, { status }); loadDash(); });
+
+bar(); show('browse');
+</script>
+</body>
+</html>
