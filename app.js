@@ -1,6 +1,7 @@
 "use strict";
 
 import { createClient } from "@supabase/supabase-js";
+import { PLATFORMS, findConflicts, parseIcal } from "./ical.js";
 
 const CURRENCY_KEY = "havenstay-currency-v1";
 const viewRoot = document.querySelector("#view-root");
@@ -34,7 +35,8 @@ function localDate(date) {
   return `${year}-${month}-${day}`;
 }
 
-let data = { properties: [], reservations: [] };
+let data = { properties: [], reservations: [], channels: [] };
+let syncing = false;
 
 function mapProperty(row) {
   return {
@@ -59,22 +61,42 @@ function mapReservation(row) {
     guests: row.guests,
     amount: Number(row.amount),
     status: row.status,
-    notes: row.notes || ""
+    notes: row.notes || "",
+    source: row.source || "direct",
+    channelId: row.channel_id || null,
+    externalUid: row.external_uid || null
+  };
+}
+
+function mapChannel(row) {
+  return {
+    id: row.id,
+    propertyId: row.property_id,
+    platform: row.platform,
+    icalUrl: row.ical_url || "",
+    priceAdjust: Number(row.price_adjust_pct) || 0,
+    token: row.export_token,
+    lastSyncedAt: row.last_synced_at,
+    lastStatus: row.last_status || "never synced"
   };
 }
 
 async function loadData() {
   const requestedUserId = currentUser?.id;
-  const [propertiesResult, reservationsResult] = await Promise.all([
+  const [propertiesResult, reservationsResult, channelsResult] = await Promise.all([
     supabase.from("properties").select("*").order("created_at", { ascending: true }),
-    supabase.from("reservations").select("*").order("check_in", { ascending: true })
+    supabase.from("reservations").select("*").order("check_in", { ascending: true }),
+    supabase.from("channels").select("*").order("created_at", { ascending: true })
   ]);
   if (propertiesResult.error) throw propertiesResult.error;
   if (reservationsResult.error) throw reservationsResult.error;
+  const channelsMissing = Boolean(channelsResult.error);
+  if (channelsMissing) console.warn("Channels unavailable. Run the channel section of supabase/schema.sql.", channelsResult.error);
   if (!requestedUserId || currentUser?.id !== requestedUserId) return;
   data = {
     properties: propertiesResult.data.map(mapProperty),
-    reservations: reservationsResult.data.map(mapReservation)
+    reservations: reservationsResult.data.map(mapReservation),
+    channels: channelsMissing ? [] : channelsResult.data.map(mapChannel)
   };
   render();
 }
@@ -218,6 +240,20 @@ function propertyFor(reservation) {
   return data.properties.find((property) => property.id === reservation.propertyId);
 }
 
+function sourceBadge(reservation) {
+  const label = PLATFORMS[reservation.source] || "Direct";
+  const conflict = findConflicts(data.reservations).ids.has(reservation.id) ? `<span class="chip chip-conflict">Double booked</span>` : "";
+  return `<span class="chip chip-${escapeHtml(reservation.source)}">${escapeHtml(label)}</span>${conflict}`;
+}
+
+function updateConflictBadge() {
+  const count = findConflicts(data.reservations).pairs.length;
+  const badge = document.querySelector("#channels-badge");
+  if (!badge) return;
+  badge.textContent = count;
+  badge.hidden = count === 0;
+}
+
 function initials(name) {
   return String(name || "?").trim().split(/\s+/).slice(0, 2).map((part) => part[0] || "").join("").toUpperCase();
 }
@@ -243,7 +279,7 @@ function navTo(view) {
     if (active) link.setAttribute("aria-current", "page");
     else link.removeAttribute("aria-current");
   });
-  const labels = { overview: "Overview", reservations: "Reservations", properties: "Properties" };
+  const labels = { overview: "Overview", reservations: "Reservations", properties: "Properties", channels: "Channels" };
   document.querySelector("#breadcrumb-current").textContent = labels[view];
   const title = document.querySelector("#page-title");
   const subtitle = document.querySelector("#page-subtitle");
@@ -251,15 +287,19 @@ function navTo(view) {
   subtitle.textContent = {
     overview: "Here’s what’s happening with your stays.",
     reservations: "Keep guest details and upcoming stays organized.",
-    properties: "Manage the places you welcome guests to."
+    properties: "Manage the places you welcome guests to.",
+    channels: "Keep Airbnb, Vrbo and Booking.com calendars in sync to prevent double bookings."
   }[view];
   render();
+  if (view === "channels") void syncAll({ quiet: true });
 }
 
 function render() {
   if (currentView === "overview") renderOverview();
   if (currentView === "reservations") renderReservations();
   if (currentView === "properties") renderProperties();
+  if (currentView === "channels") renderChannels();
+  updateConflictBadge();
 }
 
 function statCard(label, value, note, icon) {
@@ -274,7 +314,7 @@ function reservationRows(reservations) {
   return reservations.map((reservation) => {
     const property = propertyFor(reservation);
     return `<tr>
-      <td><div class="guest-cell"><span class="mini-avatar">${escapeHtml(initials(reservation.guest))}</span><span><span class="guest-name">${escapeHtml(reservation.guest)}</span><span class="guest-property">${escapeHtml(property?.name || "Property removed")}</span></span></div></td>
+      <td><div class="guest-cell"><span class="mini-avatar">${escapeHtml(initials(reservation.guest))}</span><span><span class="guest-name">${escapeHtml(reservation.guest)}</span><span class="guest-property">${escapeHtml(property?.name || "Property removed")} ${sourceBadge(reservation)}</span></span></div></td>
       <td>${formatDate(reservation.checkIn)} – ${formatDate(reservation.checkOut)}</td>
       <td>${Number(reservation.guests) || 1} ${Number(reservation.guests) === 1 ? "guest" : "guests"}</td>
       <td><span class="status status-${escapeHtml(reservation.status)}">${escapeHtml(reservation.status)}</span></td>
@@ -358,7 +398,7 @@ function renderReservations() {
       <tbody>${filtered.length ? filtered.map((reservation) => {
         const property = propertyFor(reservation);
         return `<tr>
-          <td><div class="guest-cell"><span class="mini-avatar">${escapeHtml(initials(reservation.guest))}</span><span><span class="guest-name">${escapeHtml(reservation.guest)}</span><span class="guest-property">${escapeHtml(property?.name || "Property removed")}</span></span></div></td>
+          <td><div class="guest-cell"><span class="mini-avatar">${escapeHtml(initials(reservation.guest))}</span><span><span class="guest-name">${escapeHtml(reservation.guest)}</span><span class="guest-property">${escapeHtml(property?.name || "Property removed")} ${sourceBadge(reservation)}</span></span></div></td>
           <td>${formatDate(reservation.checkIn)} – ${formatDate(reservation.checkOut)}</td>
           <td>${Number(reservation.guests) || 1} ${Number(reservation.guests) === 1 ? "guest" : "guests"}</td>
           <td><span class="status status-${escapeHtml(reservation.status)}">${escapeHtml(reservation.status)}</span></td>
@@ -367,6 +407,131 @@ function renderReservations() {
         </tr>`;
       }).join("") : `<tr><td colspan="6"><div class="empty-state"><span class="empty-icon">▤</span><strong>No matching reservations</strong><p>Try changing your search or add a new reservation.</p></div></td></tr>`}</tbody>
     </table></div></section>`;
+}
+
+function exportUrl(channel) {
+  return `${window.location.origin}/api/calendar?token=${channel.token}`;
+}
+
+function renderCalendarGrid() {
+  const days = 30;
+  const start = parseDate(localDate(new Date()));
+  const dates = Array.from({ length: days }, (_, index) => {
+    const day = new Date(start);
+    day.setDate(day.getDate() + index);
+    return localDate(day);
+  });
+  const { ids } = findConflicts(data.reservations);
+  const header = dates.map((date) => `<span class="cal-day ${parseDate(date).getDate() === 1 ? "cal-first" : ""}" title="${date}">${parseDate(date).getDate()}</span>`).join("");
+  const rows = data.properties.map((property) => {
+    const cells = dates.map((date) => {
+      const hits = data.reservations.filter((entry) => entry.propertyId === property.id && entry.status !== "cancelled" && entry.checkIn <= date && date < entry.checkOut);
+      if (!hits.length) return `<span class="cal-cell"></span>`;
+      const conflict = hits.length > 1 || hits.some((entry) => ids.has(entry.id));
+      const top = hits[0];
+      return `<span class="cal-cell booked src-${escapeHtml(top.source)} ${conflict ? "conflict" : ""}" title="${escapeHtml(top.guest)} · ${escapeHtml(PLATFORMS[top.source] || "Direct")}${conflict ? " · DOUBLE BOOKED" : ""}"></span>`;
+    }).join("");
+    return `<div class="cal-row"><span class="cal-name">${escapeHtml(property.name)}</span><div class="cal-cells">${cells}</div></div>`;
+  }).join("");
+  return `<div class="cal-grid"><div class="cal-row cal-head"><span class="cal-name"></span><div class="cal-cells">${header}</div></div>${rows}</div>
+    <div class="cal-legend"><span><i class="src-direct"></i>Direct</span><span><i class="src-airbnb"></i>Airbnb</span><span><i class="src-vrbo"></i>Vrbo</span><span><i class="src-booking"></i>Booking.com</span><span><i class="src-other"></i>Other</span><span><i class="conflict-key"></i>Double booked</span></div>`;
+}
+
+function renderChannels() {
+  const { pairs } = findConflicts(data.reservations);
+  const conflictHtml = pairs.length ? `<section class="panel conflict-panel"><div class="panel-heading"><div><h2>⚠ ${pairs.length} double ${pairs.length === 1 ? "booking" : "bookings"} to resolve</h2><p>These stays overlap on the same property. Cancel or move one of each pair.</p></div></div>
+    <div class="activity-list">${pairs.map(([a, b]) => `<div class="activity-item"><span class="activity-dot conflict-dot"></span><div class="activity-copy"><strong>${escapeHtml(propertyFor(a)?.name || "Property")}</strong><p>${escapeHtml(a.guest)} (${escapeHtml(PLATFORMS[a.source] || "Direct")}, ${formatDate(a.checkIn)}–${formatDate(a.checkOut)}) overlaps ${escapeHtml(b.guest)} (${escapeHtml(PLATFORMS[b.source] || "Direct")}, ${formatDate(b.checkIn)}–${formatDate(b.checkOut)})</p></div></div>`).join("")}</div></section>` : "";
+  const channelRows = data.channels.map((channel) => {
+    const property = data.properties.find((entry) => entry.id === channel.propertyId);
+    const price = property ? money(property.rate * (1 + channel.priceAdjust / 100)) : "–";
+    const synced = channel.lastSyncedAt ? new Date(channel.lastSyncedAt).toLocaleString() : "Never";
+    return `<tr>
+      <td><span class="chip chip-${escapeHtml(channel.platform)}">${escapeHtml(PLATFORMS[channel.platform])}</span></td>
+      <td>${escapeHtml(property?.name || "Property removed")}</td>
+      <td>${price}<span class="guest-property">${channel.priceAdjust >= 0 ? "+" : ""}${channel.priceAdjust}% on base rate</span></td>
+      <td>${escapeHtml(channel.lastStatus)}<span class="guest-property">${escapeHtml(synced)}</span></td>
+      <td><div class="property-actions">
+        <button class="small-button" data-action="sync-channel" data-id="${escapeHtml(channel.id)}" ${channel.icalUrl ? "" : "disabled"}>Sync</button>
+        <button class="small-button" data-action="copy-feed" data-id="${escapeHtml(channel.id)}">Copy export link</button>
+        <button class="small-button" data-action="edit-channel" data-id="${escapeHtml(channel.id)}">Edit</button>
+        <button class="small-button danger" data-action="delete-channel" data-id="${escapeHtml(channel.id)}">Remove</button>
+      </div></td></tr>`;
+  }).join("");
+  viewRoot.innerHTML = `
+    <div class="toolbar">
+      <span class="toolbar-title">${data.channels.length} connected ${data.channels.length === 1 ? "channel" : "channels"}</span>
+      <div class="toolbar-filters">
+        <button class="button button-secondary" data-action="sync-all" ${syncing || !data.channels.some((c) => c.icalUrl) ? "disabled" : ""}>${syncing ? "Syncing…" : "Sync all now"}</button>
+        <button class="button button-primary" data-action="add-channel">+ Connect channel</button>
+      </div>
+    </div>
+    ${conflictHtml}
+    <section class="panel"><div class="panel-heading"><div><h2>Multi-calendar</h2><p>Next 30 days across every property and channel</p></div></div>${data.properties.length ? renderCalendarGrid() : `<div class="empty-state"><strong>No properties yet</strong><p>Add a property to see its calendar.</p></div>`}</section>
+    <section class="panel"><div class="panel-heading"><div><h2>Connected channels</h2><p>Import each channel's calendar link, then paste your export link into that channel so it sees your other bookings.</p></div></div>
+      <div class="table-wrap"><table><thead><tr><th>CHANNEL</th><th>PROPERTY</th><th>CHANNEL RATE</th><th>LAST SYNC</th><th></th></tr></thead>
+      <tbody>${channelRows || `<tr><td colspan="5"><div class="empty-state"><span class="empty-icon">⇄</span><strong>No channels connected</strong><p>Connect Airbnb, Vrbo or Booking.com to keep calendars in sync.</p></div></td></tr>`}</tbody></table></div></section>
+    <p class="note">Availability syncs through each channel's iCal calendar (imports run when you press Sync or when you open this page, then every 15 minutes while it stays open). Pricing shown per channel is your base rate plus the adjustment; push prices, photos and policies in each channel's own settings.</p>`;
+}
+
+async function syncChannel(channel, { quiet = false } = {}) {
+  const property = data.properties.find((entry) => entry.id === channel.propertyId);
+  let status = "";
+  try {
+    const response = await fetch(`/api/ical-proxy?url=${encodeURIComponent(channel.icalUrl)}`);
+    if (!response.ok) throw new Error((await response.text()) || `HTTP ${response.status}`);
+    const events = parseIcal(await response.text());
+    const today = localDate(new Date());
+    const known = new Map(data.reservations.filter((entry) => entry.channelId === channel.id).map((entry) => [entry.externalUid, entry]));
+    const rows = events.filter((event) => event.end >= today).map((event) => ({
+      user_id: currentUser.id,
+      property_id: channel.propertyId,
+      channel_id: channel.id,
+      external_uid: event.uid,
+      source: channel.platform,
+      guest: event.summary.slice(0, 120) || "Reserved",
+      email: "",
+      guests: 1,
+      amount: 0,
+      check_in: event.start,
+      check_out: event.end,
+      status: "confirmed",
+      notes: `Imported from ${PLATFORMS[channel.platform]}`
+    }));
+    if (rows.length) {
+      const { error } = await supabase.from("reservations").upsert(rows, { onConflict: "channel_id,external_uid" });
+      if (error) throw error;
+    }
+    const seen = new Set(events.map((event) => event.uid));
+    const goneIds = [...known.values()].filter((entry) => entry.checkOut >= today && entry.status !== "cancelled" && !seen.has(entry.externalUid)).map((entry) => entry.id);
+    if (goneIds.length) {
+      const { error } = await supabase.from("reservations").update({ status: "cancelled" }).in("id", goneIds);
+      if (error) throw error;
+    }
+    status = `${rows.length} blocked ${rows.length === 1 ? "range" : "ranges"} imported`;
+  } catch (error) {
+    console.error("Channel sync failed.", error);
+    status = `Failed: ${String(error.message || error).slice(0, 80)}`;
+  }
+  const { data: saved } = await supabase.from("channels").update({ last_synced_at: new Date().toISOString(), last_status: status }).eq("id", channel.id).select("*").single();
+  if (saved) data.channels = data.channels.map((entry) => entry.id === channel.id ? mapChannel(saved) : entry);
+  if (!quiet) showToast(`${PLATFORMS[channel.platform]}${property ? ` · ${property.name}` : ""}: ${status}`);
+  return !status.startsWith("Failed");
+}
+
+async function syncAll({ quiet = false } = {}) {
+  if (syncing || !supabase || !currentUser) return;
+  const targets = data.channels.filter((channel) => channel.icalUrl);
+  if (!targets.length) return;
+  syncing = true;
+  if (currentView === "channels") render();
+  try {
+    for (const channel of targets) await syncChannel(channel, { quiet });
+    const { data: rows, error } = await supabase.from("reservations").select("*").order("check_in", { ascending: true });
+    if (!error) data.reservations = rows.map(mapReservation);
+  } finally {
+    syncing = false;
+    render();
+  }
 }
 
 function renderProperties() {
@@ -411,8 +576,8 @@ function field(name, label, type, value = "", options = {}) {
 }
 
 function openEditor(type, item = null) {
-  if (type === "reservation" && !data.properties.length) {
-    showToast("Add a property before creating a reservation.");
+  if ((type === "reservation" || type === "channel") && !data.properties.length) {
+    showToast(`Add a property before creating a ${type}.`);
     navTo("properties");
     return;
   }
@@ -429,6 +594,14 @@ function openEditor(type, item = null) {
       field("bedrooms", "Bedrooms", "number", item?.bedrooms ?? 1, { min: 1, step: 1 }),
       field("rate", "Nightly rate", "number", item?.rate ?? "", { min: 0, step: "0.01" }),
       field("description", "Description", "textarea", item?.description, { full: true, required: false, placeholder: "A few details about your place" })
+    ].join("");
+  } else if (type === "channel") {
+    const choices = data.properties.map((property) => [property.id, property.name]);
+    formFields.innerHTML = [
+      field("propertyId", "Property", "select", item?.propertyId || choices[0][0], { choices }),
+      field("platform", "Channel", "select", item?.platform || "airbnb", { choices: Object.entries(PLATFORMS) }),
+      field("icalUrl", "Channel calendar (iCal) link", "url", item?.icalUrl, { full: true, required: false, placeholder: "https://www.airbnb.com/calendar/ical/…ics" }),
+      field("priceAdjust", "Price adjustment on this channel (%)", "number", item?.priceAdjust ?? 0, { min: -90, step: "0.1" })
     ].join("");
   } else {
     const choices = data.properties.map((property) => [property.id, property.name]);
@@ -460,8 +633,14 @@ async function saveEditor(event) {
     return;
   }
   const isProperty = editor.type === "property";
-  const table = isProperty ? "properties" : "reservations";
-  const payload = isProperty ? {
+  const isChannel = editor.type === "channel";
+  const table = isProperty ? "properties" : isChannel ? "channels" : "reservations";
+  const payload = isChannel ? {
+    property_id: values.propertyId,
+    platform: values.platform,
+    ical_url: values.icalUrl.trim(),
+    price_adjust_pct: Number(values.priceAdjust) || 0
+  } : isProperty ? {
     name: values.name.trim(),
     location: values.location.trim(),
     bedrooms: Number(values.bedrooms),
@@ -487,7 +666,12 @@ async function saveEditor(event) {
       : supabase.from(table).insert({ ...payload, user_id: currentUser.id });
     const { data: savedRow, error } = await request.select("*").single();
     if (error) throw error;
-    if (isProperty) {
+    if (isChannel) {
+      const channel = mapChannel(savedRow);
+      data.channels = editor.id
+        ? data.channels.map((current) => current.id === channel.id ? channel : current)
+        : [...data.channels, channel];
+    } else if (isProperty) {
       const property = mapProperty(savedRow);
       data.properties = editor.id
         ? data.properties.map((current) => current.id === property.id ? property : current)
@@ -500,7 +684,8 @@ async function saveEditor(event) {
     }
     dialog.close();
     render();
-    showToast(`${isProperty ? "Property" : "Reservation"} ${editor.id ? "updated" : "added"}.`);
+    showToast(`${isProperty ? "Property" : isChannel ? "Channel" : "Reservation"} ${editor.id ? "updated" : "added"}.`);
+    if (isChannel && savedRow.ical_url) void syncAll({ quiet: true });
   } catch (error) {
     console.error(`Could not save ${editor.type}.`, error);
     showToast(error.message || `Could not save ${editor.type}.`);
@@ -516,6 +701,43 @@ async function handleAction(event) {
   if (action === "edit-reservation") {
     const item = data.reservations.find((reservation) => reservation.id === id);
     if (item) openEditor("reservation", item);
+  }
+  if (action === "add-channel") openEditor("channel");
+  if (action === "sync-all") void syncAll();
+  if (action === "edit-channel") {
+    const item = data.channels.find((channel) => channel.id === id);
+    if (item) openEditor("channel", item);
+  }
+  if (action === "sync-channel") {
+    const channel = data.channels.find((entry) => entry.id === id);
+    if (channel) {
+      actionButton.disabled = true;
+      await syncChannel(channel);
+      const { data: rows } = await supabase.from("reservations").select("*").order("check_in", { ascending: true });
+      if (rows) data.reservations = rows.map(mapReservation);
+      render();
+    }
+  }
+  if (action === "copy-feed") {
+    const channel = data.channels.find((entry) => entry.id === id);
+    if (channel) {
+      try {
+        await navigator.clipboard.writeText(exportUrl(channel));
+        showToast("Export link copied. Paste it into the channel's calendar import.");
+      } catch {
+        window.prompt("Copy this export link", exportUrl(channel));
+      }
+    }
+  }
+  if (action === "delete-channel") {
+    const channel = data.channels.find((entry) => entry.id === id);
+    if (!channel || !window.confirm(`Disconnect ${PLATFORMS[channel.platform]}? Its imported bookings stay on your calendar.`)) return;
+    const { error } = await supabase.from("channels").delete().eq("id", id);
+    if (error) { showToast(error.message || "Could not remove channel."); return; }
+    data.channels = data.channels.filter((entry) => entry.id !== id);
+    data.reservations = data.reservations.map((entry) => entry.channelId === id ? { ...entry, channelId: null } : entry);
+    render();
+    showToast("Channel disconnected.");
   }
   if (action === "edit-property") {
     const item = data.properties.find((property) => property.id === id);
@@ -557,6 +779,7 @@ async function handleAction(event) {
 }
 
 document.querySelectorAll(".nav-link").forEach((link) => link.addEventListener("click", () => navTo(link.dataset.view)));
+setInterval(() => { if (currentUser) void syncAll({ quiet: true }); }, 15 * 60 * 1000);
 document.querySelector("#add-property-button").addEventListener("click", () => openEditor("property"));
 document.querySelector("#add-reservation-button").addEventListener("click", () => openEditor("reservation"));
 document.querySelector("#currency-select").addEventListener("change", (event) => {
