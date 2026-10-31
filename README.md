@@ -46,3 +46,14 @@ The **Channels** page keeps Airbnb, Vrbo and Booking.com calendars in sync using
 4. Overlapping stays are flagged on the calendar grid, in reservations and in the sidebar badge.
 
 Imports run when you press Sync, when you open the Channels page, and every 15 minutes while the app is open. The `api/` functions (Vercel) fetch channel calendars and serve the export feed, so this needs a Vercel deployment, not `vite preview`. Prices, photos and policies are not pushed: that needs each channel's partner API, so the per-channel price adjustment is shown for reference.
+
+## Unified inbox and guest communication
+
+The **Inbox** page keeps every guest conversation (Airbnb, WhatsApp, email, Booking.com, Vrbo, SMS) in one place.
+
+1. Run the "Unified inbox" section at the bottom of `supabase/schema.sql` in the Supabase SQL editor.
+2. Start a conversation, or log a message a guest sent you on any platform, and reply from the thread.
+3. Click **Add starter templates** for booking confirmation, pre-arrival, check-out and review-request messages. They are queued automatically for direct reservations when due (on load, when you open the Inbox and every 15 minutes while the app is open), once per reservation per trigger.
+4. Queued messages are sent with one click via WhatsApp, SMS or your email app. An **auto-reply** template drafts a response when a logged guest message contains one of its keywords.
+
+Airbnb, Booking.com and Vrbo messages can't be read automatically without each platform's partner API, and WhatsApp sending needs the WhatsApp Business API, so messages are logged here and sent through the guest's own channel.

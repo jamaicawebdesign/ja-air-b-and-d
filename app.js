@@ -2,6 +2,7 @@
 
 import { createClient } from "@supabase/supabase-js";
 import { PLATFORMS, findConflicts, parseIcal } from "./ical.js";
+import { CHANNELS, STARTER_TEMPLATES, TRIGGERS, deliveryLink, dueMessages, fillTemplate, matchAutoReply } from "./inbox.js";
 
 const CURRENCY_KEY = "havenstay-currency-v1";
 const viewRoot = document.querySelector("#view-root");
@@ -35,7 +36,9 @@ function localDate(date) {
   return `${year}-${month}-${day}`;
 }
 
-let data = { properties: [], reservations: [], channels: [] };
+let data = { properties: [], reservations: [], channels: [], conversations: [], messages: [], templates: [] };
+let selectedConversationId = null;
+let automating = false;
 let syncing = false;
 
 function mapProperty(row) {
@@ -64,8 +67,29 @@ function mapReservation(row) {
     notes: row.notes || "",
     source: row.source || "direct",
     channelId: row.channel_id || null,
-    externalUid: row.external_uid || null
+    externalUid: row.external_uid || null,
+    createdAt: row.created_at || ""
   };
+}
+
+function mapConversation(row) {
+  return {
+    id: row.id,
+    reservationId: row.reservation_id,
+    guestName: row.guest_name,
+    guestContact: row.guest_contact || "",
+    channel: row.channel,
+    unread: row.unread || 0,
+    lastMessageAt: row.last_message_at
+  };
+}
+
+function mapMessage(row) {
+  return { id: row.id, conversationId: row.conversation_id, reservationId: row.reservation_id, direction: row.direction, body: row.body, status: row.status, triggerKey: row.trigger_key, createdAt: row.created_at };
+}
+
+function mapTemplate(row) {
+  return { id: row.id, trigger: row.trigger, name: row.name, body: row.body, offsetDays: row.offset_days, keywords: row.keywords || "", enabled: row.enabled };
 }
 
 function mapChannel(row) {
@@ -83,11 +107,16 @@ function mapChannel(row) {
 
 async function loadData() {
   const requestedUserId = currentUser?.id;
-  const [propertiesResult, reservationsResult, channelsResult] = await Promise.all([
+  const [propertiesResult, reservationsResult, channelsResult, conversationsResult, messagesResult, templatesResult] = await Promise.all([
     supabase.from("properties").select("*").order("created_at", { ascending: true }),
     supabase.from("reservations").select("*").order("check_in", { ascending: true }),
-    supabase.from("channels").select("*").order("created_at", { ascending: true })
+    supabase.from("channels").select("*").order("created_at", { ascending: true }),
+    supabase.from("conversations").select("*").order("last_message_at", { ascending: false }),
+    supabase.from("messages").select("*").order("created_at", { ascending: true }),
+    supabase.from("message_templates").select("*").order("created_at", { ascending: true })
   ]);
+  const inboxMissing = Boolean(conversationsResult.error || messagesResult.error || templatesResult.error);
+  if (inboxMissing) console.warn("Inbox unavailable. Run the inbox section of supabase/schema.sql.", conversationsResult.error || messagesResult.error || templatesResult.error);
   if (propertiesResult.error) throw propertiesResult.error;
   if (reservationsResult.error) throw reservationsResult.error;
   const channelsMissing = Boolean(channelsResult.error);
@@ -96,8 +125,12 @@ async function loadData() {
   data = {
     properties: propertiesResult.data.map(mapProperty),
     reservations: reservationsResult.data.map(mapReservation),
-    channels: channelsMissing ? [] : channelsResult.data.map(mapChannel)
+    channels: channelsMissing ? [] : channelsResult.data.map(mapChannel),
+    conversations: inboxMissing ? [] : conversationsResult.data.map(mapConversation),
+    messages: inboxMissing ? [] : messagesResult.data.map(mapMessage),
+    templates: inboxMissing ? [] : templatesResult.data.map(mapTemplate)
   };
+  void runAutomations({ quiet: true });
   render();
 }
 
@@ -252,6 +285,12 @@ function updateConflictBadge() {
   if (!badge) return;
   badge.textContent = count;
   badge.hidden = count === 0;
+  const inboxBadge = document.querySelector("#inbox-badge");
+  if (inboxBadge) {
+    const pending = data.conversations.reduce((total, entry) => total + entry.unread, 0) + data.messages.filter((entry) => entry.status === "queued").length;
+    inboxBadge.textContent = pending;
+    inboxBadge.hidden = pending === 0;
+  }
 }
 
 function initials(name) {
@@ -279,7 +318,7 @@ function navTo(view) {
     if (active) link.setAttribute("aria-current", "page");
     else link.removeAttribute("aria-current");
   });
-  const labels = { overview: "Overview", reservations: "Reservations", properties: "Properties", channels: "Channels" };
+  const labels = { overview: "Overview", reservations: "Reservations", properties: "Properties", channels: "Channels", inbox: "Inbox" };
   document.querySelector("#breadcrumb-current").textContent = labels[view];
   const title = document.querySelector("#page-title");
   const subtitle = document.querySelector("#page-subtitle");
@@ -288,10 +327,12 @@ function navTo(view) {
     overview: "Here’s what’s happening with your stays.",
     reservations: "Keep guest details and upcoming stays organized.",
     properties: "Manage the places you welcome guests to.",
+    inbox: "Every guest conversation in one place, with automated messages.",
     channels: "Keep Airbnb, Vrbo and Booking.com calendars in sync to prevent double bookings."
   }[view];
   render();
   if (view === "channels") void syncAll({ quiet: true });
+  if (view === "inbox") void runAutomations({ quiet: true });
 }
 
 function render() {
@@ -299,6 +340,7 @@ function render() {
   if (currentView === "reservations") renderReservations();
   if (currentView === "properties") renderProperties();
   if (currentView === "channels") renderChannels();
+  if (currentView === "inbox") renderInbox();
   updateConflictBadge();
 }
 
@@ -534,6 +576,185 @@ async function syncAll({ quiet = false } = {}) {
   }
 }
 
+function conversationMessages(id) {
+  return data.messages.filter((message) => message.conversationId === id).sort((a, b) => a.createdAt.localeCompare(b.createdAt));
+}
+
+function messageVars(reservation) {
+  const property = reservation ? propertyFor(reservation) : null;
+  return {
+    guest: reservation?.guest || "there",
+    property: property?.name || "our place",
+    check_in: reservation ? formatDate(reservation.checkIn, { month: "short", day: "numeric", year: "numeric" }) : "",
+    check_out: reservation ? formatDate(reservation.checkOut, { month: "short", day: "numeric", year: "numeric" }) : ""
+  };
+}
+
+function formatStamp(value) {
+  return new Date(value).toLocaleString(undefined, { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" });
+}
+
+function renderInbox() {
+  const conversations = [...data.conversations].sort((a, b) => b.lastMessageAt.localeCompare(a.lastMessageAt));
+  if (!conversations.some((entry) => entry.id === selectedConversationId)) selectedConversationId = conversations[0]?.id || null;
+  const active = conversations.find((entry) => entry.id === selectedConversationId);
+  const list = conversations.map((entry) => {
+    const last = conversationMessages(entry.id).at(-1);
+    return `<button class="convo ${entry.id === selectedConversationId ? "active" : ""}" data-action="open-conversation" data-id="${escapeHtml(entry.id)}">
+      <span class="mini-avatar">${escapeHtml(initials(entry.guestName))}</span>
+      <span class="convo-body"><span class="convo-top"><strong>${escapeHtml(entry.guestName)}</strong>${entry.unread ? `<span class="nav-badge">${entry.unread}</span>` : ""}</span>
+      <span class="chip chip-${escapeHtml(entry.channel)}">${escapeHtml(CHANNELS[entry.channel])}</span>
+      <span class="convo-preview">${escapeHtml(last?.body || "No messages yet")}</span></span></button>`;
+  }).join("");
+  const thread = active ? conversationMessages(active.id).map((message) => {
+    const link = message.direction === "out" ? deliveryLink(active, message.body) : null;
+    const queued = message.status === "queued";
+    return `<div class="bubble ${message.direction === "out" ? "bubble-out" : "bubble-in"} ${queued ? "bubble-queued" : ""}">
+      <p>${escapeHtml(message.body)}</p>
+      <span class="bubble-meta">${message.triggerKey ? `⚙ ${escapeHtml(TRIGGERS[message.triggerKey] || "Automated")} · ` : ""}${queued ? "Ready to send · " : ""}${escapeHtml(formatStamp(message.createdAt))}
+      ${message.direction === "out" && queued ? (link ? `<a class="small-button" href="${escapeHtml(link)}" target="_blank" rel="noopener" data-action="mark-sent" data-id="${escapeHtml(message.id)}">Send via ${escapeHtml(CHANNELS[active.channel])} ↗</a>` : `<button class="small-button" data-action="mark-sent" data-id="${escapeHtml(message.id)}">Mark as sent</button>`) : ""}
+      ${message.direction === "out" && !queued && link ? `<a class="small-button" href="${escapeHtml(link)}" target="_blank" rel="noopener">Open in ${escapeHtml(CHANNELS[active.channel])} ↗</a>` : ""}</span></div>`;
+  }).join("") || `<div class="empty-state"><strong>No messages yet</strong><p>Write the first message below.</p></div>` : "";
+  const templateRows = data.templates.map((template) => `<tr>
+    <td><strong>${escapeHtml(template.name)}</strong><span class="guest-property">${escapeHtml(TRIGGERS[template.trigger])}${template.trigger === "auto_reply" ? ` · keywords: ${escapeHtml(template.keywords || "none")}` : template.trigger === "booking_confirmation" ? "" : ` · ${template.offsetDays > 0 ? `${template.offsetDays} day(s) after` : template.offsetDays < 0 ? `${-template.offsetDays} day(s) before` : "on"} ${template.trigger === "pre_arrival" ? "check-in" : "check-out"}`}</span></td>
+    <td class="template-body">${escapeHtml(template.body)}</td>
+    <td><span class="status status-${template.enabled ? "confirmed" : "cancelled"}">${template.enabled ? "On" : "Off"}</span></td>
+    <td><div class="property-actions"><button class="small-button" data-action="toggle-template" data-id="${escapeHtml(template.id)}">${template.enabled ? "Turn off" : "Turn on"}</button><button class="small-button" data-action="edit-template" data-id="${escapeHtml(template.id)}">Edit</button><button class="small-button danger" data-action="delete-template" data-id="${escapeHtml(template.id)}">Remove</button></div></td></tr>`).join("");
+  viewRoot.innerHTML = `
+    <div class="toolbar"><span class="toolbar-title">${conversations.length} ${conversations.length === 1 ? "conversation" : "conversations"}</span>
+      <div class="toolbar-filters"><button class="button button-secondary" data-action="run-automations" ${automating ? "disabled" : ""}>${automating ? "Checking…" : "Run automations"}</button><button class="button button-primary" data-action="add-conversation">+ New conversation</button></div></div>
+    <section class="panel inbox-panel">
+      <div class="inbox-list">${list || `<div class="empty-state"><span class="empty-icon">✉</span><strong>No conversations</strong><p>Start one, or add a reservation to trigger automated messages.</p></div>`}</div>
+      <div class="inbox-thread">${active ? `
+        <div class="thread-head"><div><strong>${escapeHtml(active.guestName)}</strong><span class="guest-property">${escapeHtml(CHANNELS[active.channel])}${active.guestContact ? ` · ${escapeHtml(active.guestContact)}` : ""}</span></div>
+          <button class="small-button danger" data-action="delete-conversation" data-id="${escapeHtml(active.id)}">Delete</button></div>
+        <div class="thread-messages">${thread}</div>
+        <form class="composer" id="composer-form"><textarea id="composer-text" required maxlength="4000" placeholder="Write a message…" aria-label="Message"></textarea>
+          <div class="composer-actions"><select id="composer-direction" class="filter-select" aria-label="Message type"><option value="out">Reply to guest</option><option value="in">Log message from guest</option></select><button class="button button-primary" type="submit">Save message</button></div></form>` : `<div class="empty-state"><strong>Select a conversation</strong></div>`}</div>
+    </section>
+    <section class="panel"><div class="panel-heading"><div><h2>Automated messages</h2><p>Triggered by reservations. Use {guest}, {property}, {check_in} and {check_out}.</p></div>
+      <div class="toolbar-filters">${data.templates.length ? "" : `<button class="button button-secondary" data-action="starter-templates">Add starter templates</button>`}<button class="button button-primary" data-action="add-template">+ New template</button></div></div>
+      <div class="table-wrap"><table><thead><tr><th>TEMPLATE</th><th>MESSAGE</th><th>STATUS</th><th></th></tr></thead><tbody>${templateRows || `<tr><td colspan="4"><div class="empty-state"><strong>No automations</strong><p>Add the starter set for confirmation, pre-arrival, check-out and review messages.</p></div></td></tr>`}</tbody></table></div></section>
+    <p class="note">Messages from Airbnb, Booking.com and Vrbo can't be pulled in automatically without each platform's partner API, so log guest messages here (or forward them) and reply from one place. Automated messages are queued for you to send with one click via WhatsApp, SMS or email; the auto-reply matches keywords and drafts a response, with no external AI service.</p>`;
+  const threadEl = viewRoot.querySelector(".thread-messages");
+  if (threadEl) threadEl.scrollTop = threadEl.scrollHeight;
+}
+
+async function addMessage(conversation, { direction, body, status = "sent", triggerKey = null, reservationId = null }) {
+  const { data: row, error } = await supabase.from("messages").insert({
+    user_id: currentUser.id, conversation_id: conversation.id, reservation_id: reservationId, direction, body, status, trigger_key: triggerKey
+  }).select("*").single();
+  if (error) throw error;
+  data.messages = [...data.messages, mapMessage(row)];
+  const unread = direction === "in" ? conversation.unread + 1 : conversation.unread;
+  const { data: saved } = await supabase.from("conversations").update({ unread, last_message_at: row.created_at }).eq("id", conversation.id).select("*").single();
+  if (saved) data.conversations = data.conversations.map((entry) => entry.id === conversation.id ? mapConversation(saved) : entry);
+  return row;
+}
+
+async function runAutomations({ quiet = false } = {}) {
+  if (automating || !supabase || !currentUser || !data.templates.length) return;
+  automating = true;
+  let created = 0;
+  try {
+    const sentKeys = new Set(data.messages.filter((entry) => entry.triggerKey && entry.reservationId).map((entry) => `${entry.reservationId}:${entry.triggerKey}`));
+    const due = dueMessages({ templates: data.templates, reservations: data.reservations, sentKeys, today: localDate(new Date()) });
+    for (const { template, reservation } of due) {
+      let conversation = data.conversations.find((entry) => entry.reservationId === reservation.id);
+      if (!conversation) {
+        const contact = reservation.phone || reservation.email;
+        const { data: row, error } = await supabase.from("conversations").insert({
+          user_id: currentUser.id, reservation_id: reservation.id, guest_name: reservation.guest,
+          guest_contact: contact, channel: reservation.phone ? "whatsapp" : "email"
+        }).select("*").single();
+        if (error) throw error;
+        conversation = mapConversation(row);
+        data.conversations = [conversation, ...data.conversations];
+      }
+      try {
+        await addMessage(conversation, { direction: "out", status: "queued", triggerKey: template.trigger, reservationId: reservation.id, body: fillTemplate(template.body, messageVars(reservation)) });
+        created += 1;
+      } catch (error) {
+        if (error.code !== "23505") throw error;
+      }
+    }
+  } catch (error) {
+    console.error("Automations failed.", error);
+    if (!quiet) showToast(error.message || "Could not run automations.");
+  } finally {
+    automating = false;
+    if (created) {
+      render();
+      if (!quiet) showToast(`${created} automated ${created === 1 ? "message" : "messages"} ready to send.`);
+    } else if (!quiet) {
+      render();
+      showToast("No automated messages are due.");
+    }
+  }
+}
+
+async function saveInboxItem(values) {
+  const type = editor.type;
+  const saveButton = document.querySelector("#save-button");
+  saveButton.disabled = true;
+  try {
+    if (type === "conversation") {
+      const reservation = data.reservations.find((entry) => entry.id === values.reservationId);
+      const { data: row, error } = await supabase.from("conversations").insert({
+        user_id: currentUser.id, reservation_id: reservation?.id || null, guest_name: values.guestName.trim(),
+        guest_contact: values.guestContact.trim(), channel: values.channel
+      }).select("*").single();
+      if (error) throw error;
+      const conversation = mapConversation(row);
+      data.conversations = [conversation, ...data.conversations];
+      selectedConversationId = conversation.id;
+    } else {
+      const payload = { trigger: values.trigger, name: values.name.trim(), body: values.body.trim(), offset_days: Number(values.offsetDays) || 0, keywords: (values.keywords || "").trim(), enabled: true };
+      const request = editor.id ? supabase.from("message_templates").update(payload).eq("id", editor.id) : supabase.from("message_templates").insert({ ...payload, user_id: currentUser.id });
+      const { data: row, error } = await request.select("*").single();
+      if (error) throw error;
+      const template = mapTemplate(row);
+      data.templates = editor.id ? data.templates.map((entry) => entry.id === template.id ? template : entry) : [...data.templates, template];
+    }
+    dialog.close();
+    render();
+    showToast(type === "conversation" ? "Conversation started." : "Template saved.");
+    if (type === "template") void runAutomations({ quiet: true });
+  } catch (error) {
+    console.error(`Could not save ${type}.`, error);
+    showToast(error.message || `Could not save ${type}.`);
+  } finally {
+    saveButton.disabled = false;
+  }
+}
+
+async function submitComposer(event) {
+  event.preventDefault();
+  const textarea = document.querySelector("#composer-text");
+  const direction = document.querySelector("#composer-direction").value;
+  const conversation = data.conversations.find((entry) => entry.id === selectedConversationId);
+  const body = textarea.value.trim();
+  if (!conversation || !body) return;
+  event.submitter.disabled = true;
+  try {
+    const reservation = data.reservations.find((entry) => entry.id === conversation.reservationId);
+    await addMessage(conversation, { direction, body, reservationId: null });
+    if (direction === "in") {
+      const reply = matchAutoReply(data.templates, body);
+      const fresh = data.conversations.find((entry) => entry.id === conversation.id);
+      if (reply && fresh) {
+        await addMessage(fresh, { direction: "out", status: "queued", body: fillTemplate(reply.body, messageVars(reservation || { guest: conversation.guestName })) });
+        showToast(`Auto-reply drafted: ${reply.name}.`);
+      }
+    }
+    render();
+  } catch (error) {
+    console.error("Could not save message.", error);
+    showToast(error.message || "Could not save message.");
+    event.submitter.disabled = false;
+  }
+}
+
 function renderProperties() {
   const query = (document.querySelector("#property-search")?.value || "").trim().toLowerCase();
   const filtered = data.properties.filter((property) => `${property.name} ${property.location}`.toLowerCase().includes(query));
@@ -595,6 +816,21 @@ function openEditor(type, item = null) {
       field("rate", "Nightly rate", "number", item?.rate ?? "", { min: 0, step: "0.01" }),
       field("description", "Description", "textarea", item?.description, { full: true, required: false, placeholder: "A few details about your place" })
     ].join("");
+  } else if (type === "conversation") {
+    formFields.innerHTML = [
+      field("guestName", "Guest name", "text", "", { full: true }),
+      field("channel", "Channel", "select", "whatsapp", { choices: Object.entries(CHANNELS) }),
+      field("guestContact", "Phone or email", "text", "", { required: false, placeholder: "+1 876… or guest@example.com" }),
+      field("reservationId", "Linked reservation (optional)", "select", "", { full: true, required: false, choices: [["", "None"], ...data.reservations.map((entry) => [entry.id, `${entry.guest} · ${entry.checkIn}`])] })
+    ].join("");
+  } else if (type === "template") {
+    formFields.innerHTML = [
+      field("name", "Template name", "text", item?.name, { full: true }),
+      field("trigger", "Trigger", "select", item?.trigger || "booking_confirmation", { choices: Object.entries(TRIGGERS) }),
+      field("offsetDays", "Days offset (− before / + after check-in or check-out)", "number", item?.offsetDays ?? 0, { min: -30, step: 1 }),
+      field("keywords", "Keywords for auto-reply (comma separated)", "text", item?.keywords, { full: true, required: false, placeholder: "wifi, parking, check-in time" }),
+      field("body", "Message", "textarea", item?.body, { full: true, placeholder: "Hi {guest}, …" })
+    ].join("");
   } else if (type === "channel") {
     const choices = data.properties.map((property) => [property.id, property.name]);
     formFields.innerHTML = [
@@ -630,6 +866,10 @@ async function saveEditor(event) {
     document.querySelector("#field-checkOut").setCustomValidity("Check-out must be after check-in.");
     document.querySelector("#field-checkOut").reportValidity();
     document.querySelector("#field-checkOut").setCustomValidity("");
+    return;
+  }
+  if (editor.type === "conversation" || editor.type === "template") {
+    await saveInboxItem(values);
     return;
   }
   const isProperty = editor.type === "property";
@@ -703,6 +943,60 @@ async function handleAction(event) {
     if (item) openEditor("reservation", item);
   }
   if (action === "add-channel") openEditor("channel");
+  if (action === "add-conversation") openEditor("conversation");
+  if (action === "add-template") openEditor("template");
+  if (action === "run-automations") { render(); void runAutomations(); }
+  if (action === "open-conversation") {
+    selectedConversationId = id;
+    const conversation = data.conversations.find((entry) => entry.id === id);
+    if (conversation?.unread) {
+      conversation.unread = 0;
+      void supabase.from("conversations").update({ unread: 0 }).eq("id", id);
+    }
+    render();
+  }
+  if (action === "mark-sent") {
+    const { error } = await supabase.from("messages").update({ status: "sent" }).eq("id", id);
+    if (error) { showToast(error.message || "Could not update message."); return; }
+    data.messages = data.messages.map((entry) => entry.id === id ? { ...entry, status: "sent" } : entry);
+    render();
+  }
+  if (action === "delete-conversation") {
+    if (!window.confirm("Delete this conversation and its messages?")) return;
+    const { error } = await supabase.from("conversations").delete().eq("id", id);
+    if (error) { showToast(error.message || "Could not delete conversation."); return; }
+    data.conversations = data.conversations.filter((entry) => entry.id !== id);
+    data.messages = data.messages.filter((entry) => entry.conversationId !== id);
+    render();
+  }
+  if (action === "edit-template") {
+    const item = data.templates.find((entry) => entry.id === id);
+    if (item) openEditor("template", item);
+  }
+  if (action === "toggle-template") {
+    const item = data.templates.find((entry) => entry.id === id);
+    if (item) {
+      const { error } = await supabase.from("message_templates").update({ enabled: !item.enabled }).eq("id", id);
+      if (error) { showToast(error.message || "Could not update template."); return; }
+      item.enabled = !item.enabled;
+      render();
+      if (item.enabled) void runAutomations({ quiet: true });
+    }
+  }
+  if (action === "delete-template") {
+    if (!window.confirm("Remove this template?")) return;
+    const { error } = await supabase.from("message_templates").delete().eq("id", id);
+    if (error) { showToast(error.message || "Could not remove template."); return; }
+    data.templates = data.templates.filter((entry) => entry.id !== id);
+    render();
+  }
+  if (action === "starter-templates") {
+    const { data: rows, error } = await supabase.from("message_templates").insert(STARTER_TEMPLATES.map((entry) => ({ ...entry, user_id: currentUser.id }))).select("*");
+    if (error) { showToast(error.message || "Could not add templates."); return; }
+    data.templates = rows.map(mapTemplate);
+    render();
+    void runAutomations();
+  }
   if (action === "sync-all") void syncAll();
   if (action === "edit-channel") {
     const item = data.channels.find((channel) => channel.id === id);
@@ -779,7 +1073,7 @@ async function handleAction(event) {
 }
 
 document.querySelectorAll(".nav-link").forEach((link) => link.addEventListener("click", () => navTo(link.dataset.view)));
-setInterval(() => { if (currentUser) void syncAll({ quiet: true }); }, 15 * 60 * 1000);
+setInterval(() => { if (currentUser) { void syncAll({ quiet: true }); void runAutomations({ quiet: true }); } }, 15 * 60 * 1000);
 document.querySelector("#add-property-button").addEventListener("click", () => openEditor("property"));
 document.querySelector("#add-reservation-button").addEventListener("click", () => openEditor("reservation"));
 document.querySelector("#currency-select").addEventListener("change", (event) => {
@@ -810,6 +1104,9 @@ viewRoot.addEventListener("input", (event) => {
     replacement?.focus();
     replacement?.setSelectionRange(selectionStart, selectionEnd);
   }
+});
+viewRoot.addEventListener("submit", (event) => {
+  if (event.target.id === "composer-form") void submitComposer(event);
 });
 viewRoot.addEventListener("change", (event) => {
   if (event.target.id === "reservation-status") render();

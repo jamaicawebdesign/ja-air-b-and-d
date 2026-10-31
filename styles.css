@@ -564,3 +564,31 @@ th { color: #6f7b74; background: #f6faf7; }
 .cal-legend i { display: inline-block; width: 12px; height: 12px; border-radius: 3px; margin-right: 6px; vertical-align: -1px; }
 .conflict-key { background: repeating-linear-gradient(45deg, #c0392b, #c0392b 3px, #f4b400 3px, #f4b400 6px); }
 .note { font-size: 12.5px; color: #666; margin: 0 4px 24px; }
+
+/* Unified inbox */
+.chip-whatsapp { background: #d9f7e4; color: #128c4a; }
+.chip-email { background: #fff0cc; color: #8a6100; }
+.chip-sms { background: #e9e9e9; color: #444; }
+.inbox-panel { display: grid; grid-template-columns: 300px 1fr; min-height: 460px; overflow: hidden; }
+.inbox-list { border-right: 1px solid #e4ebe7; overflow-y: auto; max-height: 560px; }
+.convo { display: flex; gap: 10px; width: 100%; text-align: left; padding: 12px 14px; border: 0; border-bottom: 1px solid #eef2ef; background: none; cursor: pointer; font: inherit; }
+.convo:hover { background: #f7faf8; }
+.convo.active { background: var(--green-pale); }
+.convo-body { display: flex; flex-direction: column; gap: 3px; min-width: 0; flex: 1; }
+.convo-top { display: flex; justify-content: space-between; align-items: center; }
+.convo .chip { margin-left: 0; align-self: flex-start; }
+.convo-preview { font-size: 12.5px; color: #666; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.inbox-thread { display: flex; flex-direction: column; min-width: 0; }
+.thread-head { display: flex; justify-content: space-between; align-items: center; padding: 14px 18px; border-bottom: 1px solid #e4ebe7; }
+.thread-messages { flex: 1; overflow-y: auto; max-height: 380px; padding: 16px 18px; display: flex; flex-direction: column; gap: 10px; }
+.bubble { max-width: 78%; padding: 10px 13px; border-radius: 14px; font-size: 14px; }
+.bubble p { margin: 0 0 6px; white-space: pre-wrap; overflow-wrap: anywhere; }
+.bubble-in { background: #f0f3f1; align-self: flex-start; }
+.bubble-out { background: var(--green-pale); align-self: flex-end; }
+.bubble-queued { border: 1px dashed #d9a400; background: #fff8e1; }
+.bubble-meta { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; font-size: 11.5px; color: #777; }
+.composer { border-top: 1px solid #e4ebe7; padding: 12px 18px; display: flex; flex-direction: column; gap: 8px; }
+.composer textarea { min-height: 70px; resize: vertical; padding: 10px; border: 1px solid #d8e0db; border-radius: 10px; font: inherit; }
+.composer-actions { display: flex; justify-content: space-between; gap: 10px; }
+.template-body { max-width: 360px; font-size: 13px; color: #555; }
+@media (max-width: 800px) { .inbox-panel { grid-template-columns: 1fr; } .inbox-list { max-height: 220px; border-right: 0; border-bottom: 1px solid #e4ebe7; } }
