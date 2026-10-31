@@ -22,7 +22,7 @@
         <h1 id="auth-title">Welcome back</h1>
         <p class="auth-subtitle" id="auth-subtitle">Sign in to manage your properties and stays.</p>
         <div id="auth-config-warning" class="auth-message auth-warning" hidden>
-          Add your Supabase project URL and publishable key to <code>.env</code>, then restart the app.
+          Supabase isn't configured for this deployment. Add <code>VITE_SUPABASE_URL</code> and <code>VITE_SUPABASE_ANON_KEY</code> in your host settings (or <code>.env</code> locally), then redeploy.
         </div>
         <form id="auth-form" novalidate data-mode="signin">
           <label class="auth-field" id="auth-name-field" for="auth-name" hidden>Full name

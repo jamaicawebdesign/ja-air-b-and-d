@@ -1,6 +1,7 @@
 "use strict";
 
 import { createClient } from "@supabase/supabase-js";
+import { SUPABASE_KEY, SUPABASE_URL } from "./supabase-config.js";
 import { PLATFORMS, findConflicts, parseIcal } from "./ical.js";
 import { CATEGORIES, monthRange, ownerPayout, propertyStats, statementHtml, sumStats } from "./reports.js";
 import { KINDS, ROLES, STATUSES, isOverdue, notifyLink, pickCleaner, smsLink, turnoversToCreate } from "./ops.js";
@@ -231,8 +232,8 @@ async function handleSession(session) {
 
 function initializeSupabase() {
   showAuth();
-  const url = import.meta.env.VITE_SUPABASE_URL;
-  const key = import.meta.env.VITE_SUPABASE_ANON_KEY;
+  const url = SUPABASE_URL;
+  const key = SUPABASE_KEY;
   if (!url || !key || url.includes("your-project-id") || key.includes("your-supabase")) {
     showAuth();
     document.querySelector("#auth-config-warning").hidden = false;
