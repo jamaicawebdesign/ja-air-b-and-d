@@ -388,7 +388,8 @@ tr:last-child td { border-bottom: 0; }
 .auth-field input:focus { border-color: #84b39a; box-shadow: 0 0 0 3px #eaf4ed; }
 .auth-submit { width: 100%; margin-top: 2px; }
 .auth-switch { margin: 19px 0 0; color: #858e89; text-align: center; font-size: 10px; }
-.auth-switch button { padding: 0; border: 0; color: var(--green); background: transparent; font-size: inherit; font-weight: 700; }
+.auth-switch a { padding: 0; color: var(--green); font-size: inherit; font-weight: 700; text-decoration: none; }
+.auth-switch a:hover { text-decoration: underline; }
 .auth-message { min-height: 0; margin: 0 0 10px; color: #a3635e; font-size: 10px; line-height: 1.5; }
 .auth-message:empty { display: none; }
 .auth-message.auth-success { color: #418769; }

@@ -13,12 +13,12 @@ const appShell = document.querySelector(".app-shell");
 const authForm = document.querySelector("#auth-form");
 const authMessage = document.querySelector("#auth-message");
 const authSubmit = document.querySelector("#auth-submit");
+const authMode = () => authForm.dataset.mode || "signin";
 let currentView = "overview";
 let editor = { type: null, id: null };
 let toastTimer;
 let supabase = null;
 let currentUser = null;
-let authMode = "signin";
 let loadingUserId = null;
 
 const dateOffset = (days) => {
@@ -592,32 +592,13 @@ document.querySelector("#auth-forgot").addEventListener("click", async () => {
   }
 });
 
-document.querySelector("#auth-switch").addEventListener("click", () => {
-  authMode = authMode === "signin" ? "signup" : "signin";
-  const signingUp = authMode === "signup";
-  document.querySelector("#auth-name-field").hidden = !signingUp;
-  document.querySelector("#auth-confirm-field").hidden = !signingUp;
-  document.querySelector("#auth-forgot").hidden = signingUp;
-  document.querySelector("#auth-eyebrow").textContent = signingUp ? "START YOUR HOST WORKSPACE" : "YOUR HOST WORKSPACE";
-  document.querySelector("#auth-title").textContent = signingUp ? "Create your account" : "Welcome back";
-  document.querySelector("#auth-subtitle").textContent = signingUp
-    ? "Create an account to keep your properties and stays in sync."
-    : "Sign in to manage your properties and stays.";
-  document.querySelector("#auth-password").autocomplete = signingUp ? "new-password" : "current-password";
-  document.querySelector("#auth-switch-copy").textContent = signingUp ? "Already have an account?" : "New to Havenstay?";
-  document.querySelector("#auth-switch").textContent = signingUp ? "Sign in" : "Create an account";
-  authSubmit.textContent = signingUp ? "Create account" : "Sign in";
-  authSubmit.disabled = !supabase;
-  setAuthMessage("");
-});
-
 authForm.addEventListener("submit", async (event) => {
   event.preventDefault();
   if (!supabase) return;
   const email = document.querySelector("#auth-email").value.trim();
   const password = passwordInput.value;
   const name = document.querySelector("#auth-name").value.trim();
-  const signingUp = authMode === "signup";
+  const signingUp = authMode() === "signup";
   if (!authForm.checkValidity()) {
     setAuthMessage(!email || !document.querySelector("#auth-email").validity.valid
       ? "Enter a valid email address."
@@ -635,10 +616,10 @@ authForm.addEventListener("submit", async (event) => {
     return;
   }
   authSubmit.disabled = true;
-  authSubmit.textContent = authMode === "signup" ? "Creating account…" : "Signing in…";
+  authSubmit.textContent = authMode() === "signup" ? "Creating account…" : "Signing in…";
   setAuthMessage("");
   try {
-    if (authMode === "signup") {
+    if (authMode() === "signup") {
       const { data: result, error } = await supabase.auth.signUp({ email, password, options: { data: { full_name: name } } });
       if (error) throw error;
       if (!result.session) {
@@ -653,7 +634,7 @@ authForm.addEventListener("submit", async (event) => {
     setAuthMessage(error.message || "Could not authenticate. Please try again.");
   } finally {
     authSubmit.disabled = false;
-    authSubmit.textContent = authMode === "signup" ? "Create account" : "Sign in";
+    authSubmit.textContent = authMode() === "signup" ? "Create account" : "Sign in";
   }
 });
 
