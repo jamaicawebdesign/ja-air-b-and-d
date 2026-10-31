@@ -70,3 +70,192 @@ create policy "Owners can update their reservations"
 create policy "Owners can delete their reservations"
   on public.reservations for delete to authenticated
   using ((select auth.uid()) = user_id);
+
+-- Channel management (run this block after the tables above)
+alter table public.reservations
+  add column if not exists source text not null default 'direct',
+  add column if not exists channel_id uuid,
+  add column if not exists external_uid text;
+
+create table if not exists public.channels (
+  id uuid primary key default gen_random_uuid(),
+  user_id uuid not null default auth.uid() references auth.users (id) on delete cascade,
+  property_id uuid not null,
+  platform text not null check (platform in ('airbnb', 'vrbo', 'booking', 'other')),
+  ical_url text not null default '',
+  price_adjust_pct numeric(6, 2) not null default 0 check (price_adjust_pct between -90 and 500),
+  export_token uuid not null default gen_random_uuid() unique,
+  last_synced_at timestamptz,
+  last_status text not null default 'never synced',
+  created_at timestamptz not null default now(),
+  constraint channels_property_owner_fkey
+    foreign key (property_id, user_id)
+    references public.properties (id, user_id)
+    on delete cascade
+);
+
+do $$ begin
+  alter table public.reservations
+    add constraint reservations_channel_fkey
+    foreign key (channel_id) references public.channels (id) on delete set null;
+exception when duplicate_object then null; end $$;
+
+create unique index if not exists reservations_channel_uid_idx
+  on public.reservations (channel_id, external_uid) where channel_id is not null;
+
+alter table public.channels enable row level security;
+revoke all on public.channels from anon;
+grant select, insert, update, delete on public.channels to authenticated;
+
+create policy "Owners can read their channels"
+  on public.channels for select to authenticated
+  using ((select auth.uid()) = user_id);
+create policy "Owners can add their channels"
+  on public.channels for insert to authenticated
+  with check ((select auth.uid()) = user_id);
+create policy "Owners can update their channels"
+  on public.channels for update to authenticated
+  using ((select auth.uid()) = user_id)
+  with check ((select auth.uid()) = user_id);
+create policy "Owners can delete their channels"
+  on public.channels for delete to authenticated
+  using ((select auth.uid()) = user_id);
+
+-- Public calendar feed: knowing the secret token is the only access. It returns
+-- every blocked date for the property except stays that came from this channel.
+create or replace function public.channel_feed(p_token uuid)
+returns table (uid text, check_in date, check_out date, summary text)
+language sql
+security definer
+set search_path = public
+as $$
+  select r.id::text, r.check_in, r.check_out, 'Reserved'
+  from public.channels c
+  join public.reservations r on r.property_id = c.property_id and r.user_id = c.user_id
+  where c.export_token = p_token
+    and r.status <> 'cancelled'
+    and r.channel_id is distinct from c.id;
+$$;
+revoke all on function public.channel_feed(uuid) from public;
+grant execute on function public.channel_feed(uuid) to anon, authenticated;
+
+-- Unified inbox & guest communication (run this block after the sections above)
+create table if not exists public.conversations (
+  id uuid primary key default gen_random_uuid(),
+  user_id uuid not null default auth.uid() references auth.users (id) on delete cascade,
+  reservation_id uuid references public.reservations (id) on delete set null,
+  guest_name text not null check (char_length(trim(guest_name)) between 1 and 120),
+  guest_contact text not null default '',
+  channel text not null check (channel in ('airbnb', 'whatsapp', 'email', 'booking', 'vrbo', 'sms')),
+  unread integer not null default 0,
+  last_message_at timestamptz not null default now(),
+  created_at timestamptz not null default now()
+);
+
+create table if not exists public.messages (
+  id uuid primary key default gen_random_uuid(),
+  user_id uuid not null default auth.uid() references auth.users (id) on delete cascade,
+  conversation_id uuid not null references public.conversations (id) on delete cascade,
+  reservation_id uuid references public.reservations (id) on delete cascade,
+  direction text not null check (direction in ('in', 'out')),
+  body text not null check (char_length(trim(body)) between 1 and 4000),
+  status text not null default 'sent' check (status in ('sent', 'queued')),
+  trigger_key text,
+  created_at timestamptz not null default now()
+);
+
+-- One automated message per trigger per reservation
+create unique index if not exists messages_trigger_once_idx
+  on public.messages (reservation_id, trigger_key) where trigger_key is not null and reservation_id is not null;
+create index if not exists messages_conversation_idx on public.messages (conversation_id, created_at);
+
+create table if not exists public.message_templates (
+  id uuid primary key default gen_random_uuid(),
+  user_id uuid not null default auth.uid() references auth.users (id) on delete cascade,
+  trigger text not null check (trigger in ('booking_confirmation', 'pre_arrival', 'check_out', 'review_request', 'auto_reply')),
+  name text not null check (char_length(trim(name)) between 1 and 80),
+  body text not null check (char_length(trim(body)) between 1 and 4000),
+  offset_days integer not null default 0 check (offset_days between -30 and 30),
+  keywords text not null default '',
+  enabled boolean not null default true,
+  created_at timestamptz not null default now()
+);
+
+alter table public.conversations enable row level security;
+alter table public.messages enable row level security;
+alter table public.message_templates enable row level security;
+revoke all on public.conversations, public.messages, public.message_templates from anon;
+grant select, insert, update, delete on public.conversations, public.messages, public.message_templates to authenticated;
+
+do $$
+declare t text;
+begin
+  foreach t in array array['conversations', 'messages', 'message_templates'] loop
+    execute format('create policy "Owners can read their %1$s" on public.%1$s for select to authenticated using ((select auth.uid()) = user_id)', t);
+    execute format('create policy "Owners can add their %1$s" on public.%1$s for insert to authenticated with check ((select auth.uid()) = user_id)', t);
+    execute format('create policy "Owners can update their %1$s" on public.%1$s for update to authenticated using ((select auth.uid()) = user_id) with check ((select auth.uid()) = user_id)', t);
+    execute format('create policy "Owners can delete their %1$s" on public.%1$s for delete to authenticated using ((select auth.uid()) = user_id)', t);
+  end loop;
+end $$;
+
+-- Operations & cleaning automation (run this block after the sections above)
+create table if not exists public.staff (
+  id uuid primary key default gen_random_uuid(),
+  user_id uuid not null default auth.uid() references auth.users (id) on delete cascade,
+  name text not null check (char_length(trim(name)) between 1 and 120),
+  phone text not null default '',
+  role text not null default 'cleaner' check (role in ('cleaner', 'maintenance', 'manager')),
+  active boolean not null default true,
+  created_at timestamptz not null default now()
+);
+
+create table if not exists public.tasks (
+  id uuid primary key default gen_random_uuid(),
+  user_id uuid not null default auth.uid() references auth.users (id) on delete cascade,
+  property_id uuid not null,
+  reservation_id uuid references public.reservations (id) on delete set null,
+  staff_id uuid references public.staff (id) on delete set null,
+  kind text not null default 'cleaning' check (kind in ('cleaning', 'maintenance')),
+  title text not null check (char_length(trim(title)) between 1 and 160),
+  notes text not null default '',
+  due_date date not null,
+  status text not null default 'todo' check (status in ('todo', 'in_progress', 'done')),
+  auto boolean not null default false,
+  notified_at timestamptz,
+  photo_paths text[] not null default '{}',
+  completed_at timestamptz,
+  created_at timestamptz not null default now(),
+  constraint tasks_property_owner_fkey
+    foreign key (property_id, user_id)
+    references public.properties (id, user_id)
+    on delete cascade
+);
+
+-- One automatic turnover task per reservation
+create unique index if not exists tasks_auto_once_idx on public.tasks (reservation_id) where auto and reservation_id is not null;
+create index if not exists tasks_user_due_idx on public.tasks (user_id, due_date);
+
+alter table public.staff enable row level security;
+alter table public.tasks enable row level security;
+revoke all on public.staff, public.tasks from anon;
+grant select, insert, update, delete on public.staff, public.tasks to authenticated;
+
+do $$
+declare t text;
+begin
+  foreach t in array array['staff', 'tasks'] loop
+    execute format('create policy "Owners can read their %1$s" on public.%1$s for select to authenticated using ((select auth.uid()) = user_id)', t);
+    execute format('create policy "Owners can add their %1$s" on public.%1$s for insert to authenticated with check ((select auth.uid()) = user_id)', t);
+    execute format('create policy "Owners can update their %1$s" on public.%1$s for update to authenticated using ((select auth.uid()) = user_id) with check ((select auth.uid()) = user_id)', t);
+    execute format('create policy "Owners can delete their %1$s" on public.%1$s for delete to authenticated using ((select auth.uid()) = user_id)', t);
+  end loop;
+end $$;
+
+-- Private storage for task photo proof; each owner can only touch their own folder
+insert into storage.buckets (id, name, public) values ('task-photos', 'task-photos', false) on conflict (id) do nothing;
+create policy "Owners read task photos" on storage.objects for select to authenticated
+  using (bucket_id = 'task-photos' and (storage.foldername(name))[1] = (select auth.uid())::text);
+create policy "Owners upload task photos" on storage.objects for insert to authenticated
+  with check (bucket_id = 'task-photos' and (storage.foldername(name))[1] = (select auth.uid())::text);
+create policy "Owners delete task photos" on storage.objects for delete to authenticated
+  using (bucket_id = 'task-photos' and (storage.foldername(name))[1] = (select auth.uid())::text);
