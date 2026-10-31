@@ -57,3 +57,14 @@ The **Inbox** page keeps every guest conversation (Airbnb, WhatsApp, email, Book
 4. Queued messages are sent with one click via WhatsApp, SMS or your email app. An **auto-reply** template drafts a response when a logged guest message contains one of its keywords.
 
 Airbnb, Booking.com and Vrbo messages can't be read automatically without each platform's partner API, and WhatsApp sending needs the WhatsApp Business API, so messages are logged here and sent through the guest's own channel.
+
+## Operations and cleaning automation
+
+The **Operations** page turns every checkout (direct or imported from Airbnb, Vrbo, Booking.com) into a cleaning task.
+
+1. Run the "Operations & cleaning automation" section at the bottom of `supabase/schema.sql`. It also creates a private `task-photos` storage bucket.
+2. Add your cleaners and maintenance staff with mobile numbers.
+3. Turnover tasks are created for checkouts from 7 days ago to 3 days ahead (on load, when you open the page and every 15 minutes), once per reservation, and assigned to the active cleaner with the fewest open tasks. You can also add maintenance tasks manually.
+4. **Notify on WhatsApp / SMS** opens a pre-written message to the assignee on your phone. Track status (To do, In progress, Done) and attach photo proof, using the camera on mobile. Overdue tasks are highlighted and counted in the sidebar badge.
+
+Staff don't have their own logins and there are no push notifications; messages are sent through WhatsApp or SMS from your device.

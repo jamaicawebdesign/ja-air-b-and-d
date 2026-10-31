@@ -2,6 +2,7 @@
 
 import { createClient } from "@supabase/supabase-js";
 import { PLATFORMS, findConflicts, parseIcal } from "./ical.js";
+import { KINDS, ROLES, STATUSES, isOverdue, notifyLink, pickCleaner, smsLink, turnoversToCreate } from "./ops.js";
 import { CHANNELS, STARTER_TEMPLATES, TRIGGERS, deliveryLink, dueMessages, fillTemplate, matchAutoReply } from "./inbox.js";
 
 const CURRENCY_KEY = "havenstay-currency-v1";
@@ -36,7 +37,9 @@ function localDate(date) {
   return `${year}-${month}-${day}`;
 }
 
-let data = { properties: [], reservations: [], channels: [], conversations: [], messages: [], templates: [] };
+let data = { properties: [], reservations: [], channels: [], conversations: [], messages: [], templates: [], staff: [], tasks: [] };
+let opsRunning = false;
+const photoUrls = new Map();
 let selectedConversationId = null;
 let automating = false;
 let syncing = false;
@@ -92,6 +95,18 @@ function mapTemplate(row) {
   return { id: row.id, trigger: row.trigger, name: row.name, body: row.body, offsetDays: row.offset_days, keywords: row.keywords || "", enabled: row.enabled };
 }
 
+function mapStaff(row) {
+  return { id: row.id, name: row.name, phone: row.phone || "", role: row.role, active: row.active };
+}
+
+function mapTask(row) {
+  return {
+    id: row.id, propertyId: row.property_id, reservationId: row.reservation_id, staffId: row.staff_id, kind: row.kind,
+    title: row.title, notes: row.notes || "", dueDate: row.due_date, status: row.status, auto: row.auto,
+    notifiedAt: row.notified_at, photos: row.photo_paths || [], completedAt: row.completed_at
+  };
+}
+
 function mapChannel(row) {
   return {
     id: row.id,
@@ -107,14 +122,18 @@ function mapChannel(row) {
 
 async function loadData() {
   const requestedUserId = currentUser?.id;
-  const [propertiesResult, reservationsResult, channelsResult, conversationsResult, messagesResult, templatesResult] = await Promise.all([
+  const [propertiesResult, reservationsResult, channelsResult, conversationsResult, messagesResult, templatesResult, staffResult, tasksResult] = await Promise.all([
     supabase.from("properties").select("*").order("created_at", { ascending: true }),
     supabase.from("reservations").select("*").order("check_in", { ascending: true }),
     supabase.from("channels").select("*").order("created_at", { ascending: true }),
     supabase.from("conversations").select("*").order("last_message_at", { ascending: false }),
     supabase.from("messages").select("*").order("created_at", { ascending: true }),
-    supabase.from("message_templates").select("*").order("created_at", { ascending: true })
+    supabase.from("message_templates").select("*").order("created_at", { ascending: true }),
+    supabase.from("staff").select("*").order("created_at", { ascending: true }),
+    supabase.from("tasks").select("*").order("due_date", { ascending: true })
   ]);
+  const opsMissing = Boolean(staffResult.error || tasksResult.error);
+  if (opsMissing) console.warn("Operations unavailable. Run the operations section of supabase/schema.sql.", staffResult.error || tasksResult.error);
   const inboxMissing = Boolean(conversationsResult.error || messagesResult.error || templatesResult.error);
   if (inboxMissing) console.warn("Inbox unavailable. Run the inbox section of supabase/schema.sql.", conversationsResult.error || messagesResult.error || templatesResult.error);
   if (propertiesResult.error) throw propertiesResult.error;
@@ -128,8 +147,11 @@ async function loadData() {
     channels: channelsMissing ? [] : channelsResult.data.map(mapChannel),
     conversations: inboxMissing ? [] : conversationsResult.data.map(mapConversation),
     messages: inboxMissing ? [] : messagesResult.data.map(mapMessage),
-    templates: inboxMissing ? [] : templatesResult.data.map(mapTemplate)
+    templates: inboxMissing ? [] : templatesResult.data.map(mapTemplate),
+    staff: opsMissing ? [] : staffResult.data.map(mapStaff),
+    tasks: opsMissing ? [] : tasksResult.data.map(mapTask)
   };
+  void runOps({ quiet: true });
   void runAutomations({ quiet: true });
   render();
 }
@@ -285,6 +307,12 @@ function updateConflictBadge() {
   if (!badge) return;
   badge.textContent = count;
   badge.hidden = count === 0;
+  const opsBadge = document.querySelector("#ops-badge");
+  if (opsBadge) {
+    const open = data.tasks.filter((task) => task.status !== "done").length;
+    opsBadge.textContent = open;
+    opsBadge.hidden = open === 0;
+  }
   const inboxBadge = document.querySelector("#inbox-badge");
   if (inboxBadge) {
     const pending = data.conversations.reduce((total, entry) => total + entry.unread, 0) + data.messages.filter((entry) => entry.status === "queued").length;
@@ -318,7 +346,7 @@ function navTo(view) {
     if (active) link.setAttribute("aria-current", "page");
     else link.removeAttribute("aria-current");
   });
-  const labels = { overview: "Overview", reservations: "Reservations", properties: "Properties", channels: "Channels", inbox: "Inbox" };
+  const labels = { overview: "Overview", reservations: "Reservations", properties: "Properties", channels: "Channels", inbox: "Inbox", operations: "Operations" };
   document.querySelector("#breadcrumb-current").textContent = labels[view];
   const title = document.querySelector("#page-title");
   const subtitle = document.querySelector("#page-subtitle");
@@ -327,12 +355,14 @@ function navTo(view) {
     overview: "Here’s what’s happening with your stays.",
     reservations: "Keep guest details and upcoming stays organized.",
     properties: "Manage the places you welcome guests to.",
+    operations: "Turnover cleaning and maintenance, assigned and tracked.",
     inbox: "Every guest conversation in one place, with automated messages.",
     channels: "Keep Airbnb, Vrbo and Booking.com calendars in sync to prevent double bookings."
   }[view];
   render();
   if (view === "channels") void syncAll({ quiet: true });
   if (view === "inbox") void runAutomations({ quiet: true });
+  if (view === "operations") void runOps({ quiet: true });
 }
 
 function render() {
@@ -341,6 +371,7 @@ function render() {
   if (currentView === "properties") renderProperties();
   if (currentView === "channels") renderChannels();
   if (currentView === "inbox") renderInbox();
+  if (currentView === "operations") renderOperations();
   updateConflictBadge();
 }
 
@@ -755,6 +786,169 @@ async function submitComposer(event) {
   }
 }
 
+function taskMessage(task) {
+  const property = data.properties.find((entry) => entry.id === task.propertyId);
+  return `${KINDS[task.kind]} task: ${task.title}\n${property?.name || ""}${property?.location ? `, ${property.location}` : ""}\nDue ${formatDate(task.dueDate, { month: "short", day: "numeric", year: "numeric" })}${task.notes ? `\nNotes: ${task.notes}` : ""}\nPlease send a photo when done.`;
+}
+
+async function photoUrl(path) {
+  if (photoUrls.has(path)) return photoUrls.get(path);
+  const { data: signed } = await supabase.storage.from("task-photos").createSignedUrl(path, 3600);
+  if (signed?.signedUrl) photoUrls.set(path, signed.signedUrl);
+  return signed?.signedUrl || "";
+}
+
+async function hydratePhotos() {
+  const images = [...viewRoot.querySelectorAll("img[data-photo-path]")];
+  await Promise.all(images.map(async (image) => {
+    const url = await photoUrl(image.dataset.photoPath);
+    if (url) image.src = url;
+  }));
+}
+
+function renderOperations() {
+  const today = localDate(new Date());
+  const open = data.tasks.filter((task) => task.status !== "done");
+  const overdue = open.filter((task) => isOverdue(task, today)).length;
+  const done = data.tasks.filter((task) => task.status === "done").length;
+  const filter = viewRoot.dataset.taskFilter || "open";
+  const shown = data.tasks
+    .filter((task) => filter === "all" || (filter === "open" ? task.status !== "done" : task.status === "done"))
+    .sort((a, b) => a.dueDate.localeCompare(b.dueDate));
+  const card = (task) => {
+    const property = data.properties.find((entry) => entry.id === task.propertyId);
+    const member = data.staff.find((entry) => entry.id === task.staffId);
+    const late = isOverdue(task, today);
+    const message = taskMessage(task);
+    const wa = member ? notifyLink(member, message) : null;
+    const sms = member ? smsLink(member, message) : null;
+    return `<article class="task-card ${late ? "task-late" : ""} task-${escapeHtml(task.status)}">
+      <div class="task-top"><div><strong>${escapeHtml(task.title)}</strong><span class="guest-property">${escapeHtml(property?.name || "Property removed")} · due ${formatDate(task.dueDate)}${late ? " · OVERDUE" : ""}${task.auto ? " · auto" : ""}</span></div>
+        <span class="chip chip-${task.kind === "cleaning" ? "direct" : "other"}">${escapeHtml(KINDS[task.kind])}</span></div>
+      ${task.notes ? `<p class="task-notes">${escapeHtml(task.notes)}</p>` : ""}
+      <div class="task-row"><label>Assigned to <select class="filter-select" data-task-assign="${escapeHtml(task.id)}"><option value="">Unassigned</option>${data.staff.filter((entry) => entry.active || entry.id === task.staffId).map((entry) => `<option value="${escapeHtml(entry.id)}" ${entry.id === task.staffId ? "selected" : ""}>${escapeHtml(entry.name)} (${escapeHtml(ROLES[entry.role])})</option>`).join("")}</select></label>
+        <label>Status <select class="filter-select" data-task-status="${escapeHtml(task.id)}">${Object.entries(STATUSES).map(([value, label]) => `<option value="${value}" ${value === task.status ? "selected" : ""}>${label}</option>`).join("")}</select></label></div>
+      <div class="task-photos">${task.photos.map((path) => `<a href="#" data-action="open-photo" data-path="${escapeHtml(path)}"><img alt="Photo proof" data-photo-path="${escapeHtml(path)}" loading="lazy"></a>`).join("")}
+        <label class="small-button photo-button">📷 Add photo<input type="file" accept="image/*" capture="environment" hidden data-task-photo="${escapeHtml(task.id)}"></label></div>
+      <div class="property-actions">
+        ${wa ? `<a class="small-button" href="${escapeHtml(wa)}" target="_blank" rel="noopener" data-action="mark-notified" data-id="${escapeHtml(task.id)}">Notify on WhatsApp ↗</a>` : ""}
+        ${sms ? `<a class="small-button" href="${escapeHtml(sms)}" data-action="mark-notified" data-id="${escapeHtml(task.id)}">Notify by SMS ↗</a>` : ""}
+        ${!member ? `<span class="guest-property">Assign staff with a phone number to notify them.</span>` : task.notifiedAt ? `<span class="guest-property">Notified ${escapeHtml(formatStamp(task.notifiedAt))}</span>` : ""}
+        <button class="small-button" data-action="edit-task" data-id="${escapeHtml(task.id)}">Edit</button>
+        <button class="small-button danger" data-action="delete-task" data-id="${escapeHtml(task.id)}">Remove</button></div>
+      ${task.completedAt ? `<span class="guest-property">Completed ${escapeHtml(formatStamp(task.completedAt))}${task.photos.length ? "" : " · no photo proof"}</span>` : ""}
+    </article>`;
+  };
+  const staffRows = data.staff.map((member) => {
+    const count = data.tasks.filter((task) => task.staffId === member.id && task.status !== "done").length;
+    return `<tr><td><strong>${escapeHtml(member.name)}</strong><span class="guest-property">${escapeHtml(member.phone || "No phone")}</span></td><td>${escapeHtml(ROLES[member.role])}</td><td>${count} open</td>
+      <td><span class="status status-${member.active ? "confirmed" : "cancelled"}">${member.active ? "Active" : "Inactive"}</span></td>
+      <td><div class="property-actions"><button class="small-button" data-action="edit-staff" data-id="${escapeHtml(member.id)}">Edit</button><button class="small-button danger" data-action="delete-staff" data-id="${escapeHtml(member.id)}">Remove</button></div></td></tr>`;
+  }).join("");
+  viewRoot.innerHTML = `
+    <div class="stats-grid">
+      ${statCard("Open tasks", open.length, "Cleaning and maintenance", "▤")}
+      ${statCard("Overdue", overdue, "Past their due date", "!")}
+      ${statCard("Completed", done, "Finished tasks", "✓")}
+      ${statCard("Staff", data.staff.filter((member) => member.active).length, "Active team members", "☺")}
+    </div>
+    <div class="toolbar"><span class="toolbar-title">${shown.length} ${shown.length === 1 ? "task" : "tasks"}</span>
+      <div class="toolbar-filters"><select id="task-filter" class="filter-select" aria-label="Filter tasks"><option value="open" ${filter === "open" ? "selected" : ""}>Open</option><option value="done" ${filter === "done" ? "selected" : ""}>Completed</option><option value="all" ${filter === "all" ? "selected" : ""}>All</option></select>
+      <button class="button button-secondary" data-action="run-ops" ${opsRunning ? "disabled" : ""}>${opsRunning ? "Checking…" : "Generate checkout tasks"}</button><button class="button button-primary" data-action="add-task">+ New task</button></div></div>
+    <div class="task-grid">${shown.map(card).join("") || `<div class="panel"><div class="empty-state"><span class="empty-icon">✓</span><strong>No tasks here</strong><p>Cleaning tasks are created automatically after each checkout, or add one yourself.</p></div></div>`}</div>
+    <section class="panel"><div class="panel-heading"><div><h2>Staff and cleaning crews</h2><p>New turnover tasks go to the active cleaner with the fewest open tasks.</p></div><button class="button button-primary" data-action="add-staff">+ Add staff</button></div>
+      <div class="table-wrap"><table><thead><tr><th>NAME</th><th>ROLE</th><th>WORKLOAD</th><th>STATUS</th><th></th></tr></thead><tbody>${staffRows || `<tr><td colspan="5"><div class="empty-state"><strong>No staff yet</strong><p>Add your cleaners so tasks can be assigned automatically.</p></div></td></tr>`}</tbody></table></div></section>
+    <p class="note">Tasks cover every checkout, including stays imported from Airbnb, Vrbo and Booking.com. Staff are notified through a WhatsApp or SMS message that opens on your phone; photos are uploaded by you (or by staff on a shared device) as proof of completion. Staff accounts and push notifications aren't included.</p>`;
+  void hydratePhotos();
+}
+
+async function runOps({ quiet = false } = {}) {
+  if (opsRunning || !supabase || !currentUser) return;
+  opsRunning = true;
+  let created = 0;
+  try {
+    const pending = turnoversToCreate({ reservations: data.reservations, tasks: data.tasks, today: localDate(new Date()) });
+    for (const reservation of pending) {
+      const property = propertyFor(reservation);
+      if (!property) continue;
+      const cleaner = pickCleaner(data.staff, data.tasks);
+      const { data: row, error } = await supabase.from("tasks").insert({
+        user_id: currentUser.id, property_id: property.id, reservation_id: reservation.id, staff_id: cleaner?.id || null,
+        kind: "cleaning", title: `Turnover clean after ${reservation.guest}`, due_date: reservation.checkOut, auto: true,
+        notes: `Checkout ${formatDate(reservation.checkOut)}. Check linens, restock supplies and report any damage.`
+      }).select("*").single();
+      if (error) {
+        if (error.code === "23505") continue;
+        throw error;
+      }
+      data.tasks = [...data.tasks, mapTask(row)];
+      created += 1;
+    }
+  } catch (error) {
+    console.error("Could not generate tasks.", error);
+    if (!quiet) showToast(error.message || "Could not generate tasks.");
+  } finally {
+    opsRunning = false;
+    if (created || !quiet) {
+      render();
+      if (!quiet) showToast(created ? `${created} cleaning ${created === 1 ? "task" : "tasks"} created.` : "No new checkouts need tasks.");
+    }
+  }
+}
+
+async function updateTask(id, changes, row) {
+  const { data: saved, error } = await supabase.from("tasks").update(row).eq("id", id).select("*").single();
+  if (error) { showToast(error.message || "Could not update task."); render(); return; }
+  data.tasks = data.tasks.map((task) => task.id === id ? mapTask(saved) : task);
+  render();
+}
+
+async function uploadTaskPhoto(id, file) {
+  if (!file || !file.type.startsWith("image/")) { showToast("Choose an image file."); return; }
+  if (file.size > 8 * 1024 * 1024) { showToast("Photo must be under 8 MB."); return; }
+  const task = data.tasks.find((entry) => entry.id === id);
+  if (!task) return;
+  const extension = (file.name.split(".").pop() || "jpg").replace(/[^a-z0-9]/gi, "").slice(0, 5).toLowerCase() || "jpg";
+  const path = `${currentUser.id}/${id}/${Date.now()}.${extension}`;
+  showToast("Uploading photo…");
+  const { error } = await supabase.storage.from("task-photos").upload(path, file, { contentType: file.type });
+  if (error) { showToast(error.message || "Could not upload photo."); return; }
+  await updateTask(id, {}, { photo_paths: [...task.photos, path] });
+  showToast("Photo added.");
+}
+
+async function saveOpsItem(values) {
+  const type = editor.type;
+  const saveButton = document.querySelector("#save-button");
+  saveButton.disabled = true;
+  try {
+    if (type === "staff") {
+      const payload = { name: values.name.trim(), phone: values.phone.trim(), role: values.role, active: values.active === "yes" };
+      const request = editor.id ? supabase.from("staff").update(payload).eq("id", editor.id) : supabase.from("staff").insert({ ...payload, user_id: currentUser.id });
+      const { data: row, error } = await request.select("*").single();
+      if (error) throw error;
+      const member = mapStaff(row);
+      data.staff = editor.id ? data.staff.map((entry) => entry.id === member.id ? member : entry) : [...data.staff, member];
+    } else {
+      const payload = { property_id: values.propertyId, kind: values.kind, title: values.title.trim(), notes: values.notes.trim(), due_date: values.dueDate, staff_id: values.staffId || null };
+      const request = editor.id ? supabase.from("tasks").update(payload).eq("id", editor.id) : supabase.from("tasks").insert({ ...payload, user_id: currentUser.id });
+      const { data: row, error } = await request.select("*").single();
+      if (error) throw error;
+      const task = mapTask(row);
+      data.tasks = editor.id ? data.tasks.map((entry) => entry.id === task.id ? task : entry) : [...data.tasks, task];
+    }
+    dialog.close();
+    render();
+    showToast(type === "staff" ? "Staff saved." : "Task saved.");
+    if (type === "staff") void runOps({ quiet: true });
+  } catch (error) {
+    console.error(`Could not save ${type}.`, error);
+    showToast(error.message || `Could not save ${type}.`);
+  } finally {
+    saveButton.disabled = false;
+  }
+}
+
 function renderProperties() {
   const query = (document.querySelector("#property-search")?.value || "").trim().toLowerCase();
   const filtered = data.properties.filter((property) => `${property.name} ${property.location}`.toLowerCase().includes(query));
@@ -797,7 +991,7 @@ function field(name, label, type, value = "", options = {}) {
 }
 
 function openEditor(type, item = null) {
-  if ((type === "reservation" || type === "channel") && !data.properties.length) {
+  if ((type === "reservation" || type === "channel" || type === "task") && !data.properties.length) {
     showToast(`Add a property before creating a ${type}.`);
     navTo("properties");
     return;
@@ -815,6 +1009,22 @@ function openEditor(type, item = null) {
       field("bedrooms", "Bedrooms", "number", item?.bedrooms ?? 1, { min: 1, step: 1 }),
       field("rate", "Nightly rate", "number", item?.rate ?? "", { min: 0, step: "0.01" }),
       field("description", "Description", "textarea", item?.description, { full: true, required: false, placeholder: "A few details about your place" })
+    ].join("");
+  } else if (type === "staff") {
+    formFields.innerHTML = [
+      field("name", "Name", "text", item?.name, { full: true, placeholder: "e.g. Marcia (cleaning crew)" }),
+      field("phone", "Mobile number (with country code)", "tel", item?.phone, { required: false, placeholder: "+1 876 555 0100" }),
+      field("role", "Role", "select", item?.role || "cleaner", { choices: Object.entries(ROLES) }),
+      field("active", "Active", "select", item && !item.active ? "no" : "yes", { choices: [["yes", "Yes"], ["no", "No"]] })
+    ].join("");
+  } else if (type === "task") {
+    formFields.innerHTML = [
+      field("title", "Task", "text", item?.title, { full: true, placeholder: "e.g. Fix leaking tap" }),
+      field("propertyId", "Property", "select", item?.propertyId || data.properties[0].id, { choices: data.properties.map((property) => [property.id, property.name]) }),
+      field("kind", "Type", "select", item?.kind || "maintenance", { choices: Object.entries(KINDS) }),
+      field("dueDate", "Due date", "date", item?.dueDate || dateOffset(1)),
+      field("staffId", "Assign to", "select", item?.staffId || "", { required: false, choices: [["", "Unassigned"], ...data.staff.filter((member) => member.active).map((member) => [member.id, member.name])] }),
+      field("notes", "Notes (optional)", "textarea", item?.notes, { full: true, required: false })
     ].join("");
   } else if (type === "conversation") {
     formFields.innerHTML = [
@@ -866,6 +1076,10 @@ async function saveEditor(event) {
     document.querySelector("#field-checkOut").setCustomValidity("Check-out must be after check-in.");
     document.querySelector("#field-checkOut").reportValidity();
     document.querySelector("#field-checkOut").setCustomValidity("");
+    return;
+  }
+  if (editor.type === "staff" || editor.type === "task") {
+    await saveOpsItem(values);
     return;
   }
   if (editor.type === "conversation" || editor.type === "template") {
@@ -943,6 +1157,42 @@ async function handleAction(event) {
     if (item) openEditor("reservation", item);
   }
   if (action === "add-channel") openEditor("channel");
+  if (action === "add-staff") openEditor("staff");
+  if (action === "add-task") openEditor("task");
+  if (action === "run-ops") { render(); void runOps(); }
+  if (action === "edit-staff") {
+    const item = data.staff.find((entry) => entry.id === id);
+    if (item) openEditor("staff", item);
+  }
+  if (action === "edit-task") {
+    const item = data.tasks.find((entry) => entry.id === id);
+    if (item) openEditor("task", item);
+  }
+  if (action === "delete-staff") {
+    if (!window.confirm("Remove this staff member? Their tasks become unassigned.")) return;
+    const { error } = await supabase.from("staff").delete().eq("id", id);
+    if (error) { showToast(error.message || "Could not remove staff."); return; }
+    data.staff = data.staff.filter((entry) => entry.id !== id);
+    data.tasks = data.tasks.map((task) => task.staffId === id ? { ...task, staffId: null } : task);
+    render();
+  }
+  if (action === "delete-task") {
+    if (!window.confirm("Remove this task?")) return;
+    const { error } = await supabase.from("tasks").delete().eq("id", id);
+    if (error) { showToast(error.message || "Could not remove task."); return; }
+    data.tasks = data.tasks.filter((entry) => entry.id !== id);
+    render();
+  }
+  if (action === "mark-notified") {
+    const stamp = new Date().toISOString();
+    const { error } = await supabase.from("tasks").update({ notified_at: stamp }).eq("id", id);
+    if (!error) data.tasks = data.tasks.map((task) => task.id === id ? { ...task, notifiedAt: stamp } : task);
+  }
+  if (action === "open-photo") {
+    event.preventDefault();
+    const url = await photoUrl(actionButton.dataset.path);
+    if (url) window.open(url, "_blank", "noopener");
+  }
   if (action === "add-conversation") openEditor("conversation");
   if (action === "add-template") openEditor("template");
   if (action === "run-automations") { render(); void runAutomations(); }
@@ -1073,7 +1323,7 @@ async function handleAction(event) {
 }
 
 document.querySelectorAll(".nav-link").forEach((link) => link.addEventListener("click", () => navTo(link.dataset.view)));
-setInterval(() => { if (currentUser) { void syncAll({ quiet: true }); void runAutomations({ quiet: true }); } }, 15 * 60 * 1000);
+setInterval(() => { if (currentUser) { void syncAll({ quiet: true }); void runAutomations({ quiet: true }); void runOps({ quiet: true }); } }, 15 * 60 * 1000);
 document.querySelector("#add-property-button").addEventListener("click", () => openEditor("property"));
 document.querySelector("#add-reservation-button").addEventListener("click", () => openEditor("reservation"));
 document.querySelector("#currency-select").addEventListener("change", (event) => {
@@ -1109,6 +1359,14 @@ viewRoot.addEventListener("submit", (event) => {
   if (event.target.id === "composer-form") void submitComposer(event);
 });
 viewRoot.addEventListener("change", (event) => {
+  const target = event.target;
+  if (target.id === "task-filter") { viewRoot.dataset.taskFilter = target.value; render(); }
+  if (target.dataset.taskAssign !== undefined) void updateTask(target.dataset.taskAssign, {}, { staff_id: target.value || null });
+  if (target.dataset.taskStatus !== undefined) {
+    const status = target.value;
+    void updateTask(target.dataset.taskStatus, {}, { status, completed_at: status === "done" ? new Date().toISOString() : null });
+  }
+  if (target.dataset.taskPhoto !== undefined) void uploadTaskPhoto(target.dataset.taskPhoto, target.files[0]);
   if (event.target.id === "reservation-status") render();
 });
 
