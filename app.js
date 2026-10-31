@@ -1662,7 +1662,7 @@ document.querySelector("#auth-forgot").addEventListener("click", async () => {
     return;
   }
   try {
-    const { error } = await supabase.auth.resetPasswordForEmail(email, { redirectTo: window.location.origin });
+    const { error } = await supabase.auth.resetPasswordForEmail(email, { redirectTo: `${window.location.origin}/app.html` });
     if (error) throw error;
     setAuthMessage("If an account exists for that email, a password reset link is on its way.", false);
   } catch (error) {
