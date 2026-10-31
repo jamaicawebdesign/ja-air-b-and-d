@@ -1,0 +1,25 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Book your stay</title>
+    <link rel="stylesheet" href="/book.css" />
+  </head>
+  <body>
+    <header class="hero">
+      <div class="hero-inner">
+        <p class="hero-kicker">Book direct · No service fees</p>
+        <h1 id="brand">Book your stay</h1>
+        <p id="tagline" class="hero-tagline"></p>
+      </div>
+    </header>
+    <main class="wrap">
+      <p id="status" class="status-box" role="status">Loading…</p>
+      <section id="properties" class="grid" hidden></section>
+      <section id="booking" class="booking" hidden aria-live="polite"></section>
+    </main>
+    <footer class="foot"><span id="contact"></span></footer>
+    <script type="module" src="/book.js"></script>
+  </body>
+</html>
