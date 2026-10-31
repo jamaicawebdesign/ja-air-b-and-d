@@ -68,3 +68,14 @@ The **Operations** page turns every checkout (direct or imported from Airbnb, Vr
 4. **Notify on WhatsApp / SMS** opens a pre-written message to the assignee on your phone. Track status (To do, In progress, Done) and attach photo proof, using the camera on mobile. Overdue tasks are highlighted and counted in the sidebar badge.
 
 Staff don't have their own logins and there are no push notifications; messages are sent through WhatsApp or SMS from your device.
+
+## Owner portals and financial reporting
+
+The **Reports** page tracks revenue, occupancy, ADR, RevPAR and expenses per month, and produces owner statements when you manage units for others.
+
+1. Run the "Owner portals & financial reporting" section at the bottom of `supabase/schema.sql`.
+2. Add owners (with a management fee %), then assign one to each property under Properties → Edit.
+3. Log expenses (cleaning, maintenance, utilities and so on) per property.
+4. Pick a month and owner to see revenue, occupancy, ADR, management fee and net payout. **Statement** opens a printable owner statement (save as PDF); **Email owner** drafts a summary email.
+
+Revenue spreads each reservation's total evenly across its nights, so stays crossing a month boundary are split. Owners don't have their own logins yet.
