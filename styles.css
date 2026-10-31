@@ -650,3 +650,4 @@ td { border-color: #dfe7e2; font-size: 13px; color: #1d2a23; }
 .bubble-meta { color: #4b5a51; }
 .cal-cell { background: #dde5e0; }
 .cal-day { color: #3d4d43; }
+.site-form { padding: 0 18px 18px; } .site-actions { margin-top: 16px; }

@@ -79,3 +79,14 @@ The **Reports** page tracks revenue, occupancy, ADR, RevPAR and expenses per mon
 4. Pick a month and owner to see revenue, occupancy, ADR, management fee and net payout. **Statement** opens a printable owner statement (save as PDF); **Email owner** drafts a summary email.
 
 Revenue spreads each reservation's total evenly across its nights, so stays crossing a month boundary are split. Owners don't have their own logins yet.
+
+## Direct booking website
+
+The **Website** page launches a branded booking site so guests can book you directly, with no OTA commission.
+
+1. Run the "Direct booking website & engine" section at the bottom of `supabase/schema.sql`.
+2. Under Website, set your brand name and web address name, choose which properties to show, and set the site to Live.
+3. Share your link (`/book.html?s=your-name`). Guests pick dates, see the total and send a request. Availability is checked against every reservation and channel calendar, so direct bookings can't double-book you.
+4. Confirm or decline requests on the Website page. Confirming blocks the dates everywhere.
+
+Public access is limited to three database functions (`site_info`, `site_busy`, `site_book`); guest details and other tables are never exposed. Online card payments aren't included: you arrange payment with the guest directly. The savings figure assumes a typical 15% OTA fee.

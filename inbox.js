@@ -48,6 +48,7 @@ export function dueMessages({ templates, reservations, sentKeys, today }) {
     if (!template.enabled || template.trigger === "auto_reply") continue;
     for (const reservation of reservations) {
       if (reservation.status === "cancelled" || reservation.source !== "direct") continue;
+      if (reservation.status === "pending" && template.trigger === "booking_confirmation") continue;
       if (sentKeys.has(`${reservation.id}:${template.trigger}`)) continue;
       const date = dueDate(template, reservation).slice(0, 10);
       // Ignore triggers that were due more than two weeks ago so enabling a template doesn't flood old stays.
