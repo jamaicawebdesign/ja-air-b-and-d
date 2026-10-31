@@ -161,6 +161,8 @@ function currencyCode() {
 }
 
 function displayName() {
+  const fullName = currentUser?.user_metadata?.full_name?.trim();
+  if (fullName) return fullName;
   const emailName = currentUser?.email?.split("@")[0] || "Landlord";
   return emailName.split(/[._-]/).filter(Boolean).map((part) => part[0].toUpperCase() + part.slice(1)).join(" ") || "Landlord";
 }
@@ -560,9 +562,42 @@ viewRoot.addEventListener("change", (event) => {
   if (event.target.id === "reservation-status") render();
 });
 
+const passwordInput = document.querySelector("#auth-password");
+const confirmInput = document.querySelector("#auth-confirm");
+
+document.querySelector("#password-toggle").addEventListener("click", (event) => {
+  const reveal = passwordInput.type === "password";
+  passwordInput.type = reveal ? "text" : "password";
+  confirmInput.type = passwordInput.type;
+  event.currentTarget.textContent = reveal ? "Hide" : "Show";
+  event.currentTarget.setAttribute("aria-label", reveal ? "Hide password" : "Show password");
+  event.currentTarget.setAttribute("aria-pressed", String(reveal));
+});
+
+document.querySelector("#auth-forgot").addEventListener("click", async () => {
+  if (!supabase) return;
+  const email = document.querySelector("#auth-email").value.trim();
+  if (!email) {
+    setAuthMessage("Enter your email address above, then choose “Forgot password?” again.");
+    document.querySelector("#auth-email").focus();
+    return;
+  }
+  try {
+    const { error } = await supabase.auth.resetPasswordForEmail(email, { redirectTo: window.location.origin });
+    if (error) throw error;
+    setAuthMessage("If an account exists for that email, a password reset link is on its way.", false);
+  } catch (error) {
+    console.error("Could not send reset email.", error);
+    setAuthMessage(error.message || "Could not send the reset email. Please try again.");
+  }
+});
+
 document.querySelector("#auth-switch").addEventListener("click", () => {
   authMode = authMode === "signin" ? "signup" : "signin";
   const signingUp = authMode === "signup";
+  document.querySelector("#auth-name-field").hidden = !signingUp;
+  document.querySelector("#auth-confirm-field").hidden = !signingUp;
+  document.querySelector("#auth-forgot").hidden = signingUp;
   document.querySelector("#auth-eyebrow").textContent = signingUp ? "START YOUR HOST WORKSPACE" : "YOUR HOST WORKSPACE";
   document.querySelector("#auth-title").textContent = signingUp ? "Create your account" : "Welcome back";
   document.querySelector("#auth-subtitle").textContent = signingUp
@@ -580,13 +615,31 @@ authForm.addEventListener("submit", async (event) => {
   event.preventDefault();
   if (!supabase) return;
   const email = document.querySelector("#auth-email").value.trim();
-  const password = document.querySelector("#auth-password").value;
+  const password = passwordInput.value;
+  const name = document.querySelector("#auth-name").value.trim();
+  const signingUp = authMode === "signup";
+  if (!authForm.checkValidity()) {
+    setAuthMessage(!email || !document.querySelector("#auth-email").validity.valid
+      ? "Enter a valid email address."
+      : "Your password must be at least 8 characters.");
+    return;
+  }
+  if (signingUp && !name) {
+    setAuthMessage("Enter your name so we can personalize your workspace.");
+    document.querySelector("#auth-name").focus();
+    return;
+  }
+  if (signingUp && password !== confirmInput.value) {
+    setAuthMessage("Passwords don’t match. Please re-enter them.");
+    confirmInput.focus();
+    return;
+  }
   authSubmit.disabled = true;
   authSubmit.textContent = authMode === "signup" ? "Creating account…" : "Signing in…";
   setAuthMessage("");
   try {
     if (authMode === "signup") {
-      const { data: result, error } = await supabase.auth.signUp({ email, password });
+      const { data: result, error } = await supabase.auth.signUp({ email, password, options: { data: { full_name: name } } });
       if (error) throw error;
       if (!result.session) {
         setAuthMessage("Account created. Check your email to confirm your address, then sign in.", false);
