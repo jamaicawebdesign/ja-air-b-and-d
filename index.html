@@ -7,11 +7,12 @@
     <meta name="description" content="A simple property and reservation manager for independent landlords.">
     <title>Havenstay — Landlord dashboard</title>
     <link rel="stylesheet" href="styles.css">
+    <script type="module" src="auth-ui.js"></script>
     <script type="module" src="app.js"></script>
   </head>
   <body>
     <main id="auth-screen" class="auth-screen">
-      <p class="auth-tagline" aria-hidden="true">Your stays,<br>beautifully organized.</p>
+      <p class="auth-tagline" aria-hidden="true">Your stays,<br><em>one love</em><br>organized.<span class="auth-kicker">Made for Jamaican hosts</span></p>
       <section class="auth-card" aria-labelledby="auth-title">
         <a class="brand auth-brand" href="#" aria-label="Havenstay home">
           <span class="brand-mark" aria-hidden="true">h</span>
@@ -23,7 +24,7 @@
         <div id="auth-config-warning" class="auth-message auth-warning" hidden>
           Add your Supabase project URL and publishable key to <code>.env</code>, then restart the app.
         </div>
-        <form id="auth-form" novalidate>
+        <form id="auth-form" novalidate data-mode="signin">
           <label class="auth-field" id="auth-name-field" for="auth-name" hidden>Full name
             <input id="auth-name" name="name" type="text" autocomplete="name" placeholder="Your name">
           </label>
@@ -43,7 +44,7 @@
           <p id="auth-message" class="auth-message" role="status" aria-live="polite"></p>
           <button class="button button-primary auth-submit" id="auth-submit" type="submit">Sign in</button>
         </form>
-        <p class="auth-switch"><span id="auth-switch-copy">New to Havenstay?</span> <button id="auth-switch" type="button">Create an account</button></p>
+        <p class="auth-switch"><span id="auth-switch-copy">New to Havenstay?</span> <a id="auth-switch" href="#signup">Create an account</a></p>
       </section>
     </main>
     <div class="app-shell" hidden>

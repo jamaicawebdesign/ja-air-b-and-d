@@ -1,62 +1,63 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1600 1000" preserveAspectRatio="xMidYMid slice" role="img" aria-label="Tropical hillside villa overlooking the sea at sunset">
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1600 1000" preserveAspectRatio="xMidYMid slice" role="img" aria-label="Jamaican hillside at sunset in the colours of the national flag">
   <defs>
     <linearGradient id="sky" x1="0" y1="0" x2="0" y2="1">
-      <stop offset="0" stop-color="#1f5c4a"/>
-      <stop offset=".45" stop-color="#e9b77b"/>
-      <stop offset=".72" stop-color="#f6d9a8"/>
+      <stop offset="0" stop-color="#0b1f14"/>
+      <stop offset=".42" stop-color="#1b6b32"/>
+      <stop offset=".68" stop-color="#fdb913"/>
+      <stop offset="1" stop-color="#ffd54a"/>
     </linearGradient>
     <linearGradient id="sea" x1="0" y1="0" x2="0" y2="1">
-      <stop offset="0" stop-color="#4f9f95"/>
-      <stop offset="1" stop-color="#1c5e63"/>
+      <stop offset="0" stop-color="#0f7a55"/>
+      <stop offset="1" stop-color="#06301f"/>
     </linearGradient>
     <radialGradient id="sun" cx=".5" cy=".5" r=".5">
-      <stop offset="0" stop-color="#fff3d1"/>
-      <stop offset=".35" stop-color="#ffe0a3" stop-opacity=".9"/>
-      <stop offset="1" stop-color="#ffd18a" stop-opacity="0"/>
+      <stop offset="0" stop-color="#fff3b8"/>
+      <stop offset=".4" stop-color="#ffd54a" stop-opacity=".85"/>
+      <stop offset="1" stop-color="#fdb913" stop-opacity="0"/>
     </radialGradient>
   </defs>
   <rect width="1600" height="1000" fill="url(#sky)"/>
-  <circle cx="1130" cy="520" r="260" fill="url(#sun)"/>
-  <circle cx="1130" cy="520" r="62" fill="#fff0c9"/>
-  <g fill="#fff" opacity=".35">
-    <ellipse cx="330" cy="230" rx="170" ry="22"/>
-    <ellipse cx="450" cy="262" rx="120" ry="16"/>
-    <ellipse cx="1260" cy="190" rx="190" ry="20"/>
-    <ellipse cx="1130" cy="222" rx="110" ry="14"/>
+  <g opacity=".14">
+    <path d="M0 0 L800 500 L0 1000 Z" fill="#000"/>
+    <path d="M1600 0 L800 500 L1600 1000 Z" fill="#000"/>
   </g>
-  <rect y="560" width="1600" height="440" fill="url(#sea)"/>
-  <g fill="#ffe3b0" opacity=".45">
-    <rect x="1000" y="575" width="260" height="6" rx="3"/>
-    <rect x="1040" y="598" width="190" height="5" rx="2.5"/>
-    <rect x="1070" y="620" width="130" height="5" rx="2.5"/>
-    <rect x="1090" y="645" width="90" height="4" rx="2"/>
+  <path d="M0 0 L1600 1000" stroke="#fdb913" stroke-width="46" opacity=".16"/>
+  <path d="M1600 0 L0 1000" stroke="#fdb913" stroke-width="46" opacity=".16"/>
+  <circle cx="1120" cy="540" r="270" fill="url(#sun)"/>
+  <circle cx="1120" cy="540" r="64" fill="#fff6c9"/>
+  <rect y="590" width="1600" height="410" fill="url(#sea)"/>
+  <g fill="#ffd54a" opacity=".5">
+    <rect x="1000" y="605" width="250" height="6" rx="3"/>
+    <rect x="1035" y="628" width="180" height="5" rx="2.5"/>
+    <rect x="1065" y="650" width="120" height="5" rx="2.5"/>
+    <rect x="1085" y="674" width="80" height="4" rx="2"/>
   </g>
-  <path d="M0 640 C220 540 380 600 560 560 C700 530 780 580 900 620 L900 1000 L0 1000 Z" fill="#2c7a60"/>
-  <path d="M0 720 C180 640 340 690 520 650 C680 620 790 690 960 760 L960 1000 L0 1000 Z" fill="#1f5f4b"/>
-  <path d="M0 830 C240 760 420 800 640 770 C820 745 960 800 1100 860 L1100 1000 L0 1000 Z" fill="#164a3b"/>
-  <g transform="translate(250 590)">
-    <rect x="0" y="40" width="190" height="86" fill="#f7efe1"/>
-    <path d="M-14 42 L95 -12 L204 42 Z" fill="#c9694a"/>
-    <rect x="150" y="-6" width="20" height="40" fill="#efe3d0"/>
-    <rect x="22" y="64" width="34" height="42" rx="3" fill="#2a5b52"/>
-    <rect x="78" y="64" width="34" height="42" rx="3" fill="#2a5b52"/>
-    <rect x="134" y="64" width="34" height="42" rx="3" fill="#2a5b52"/>
-    <rect x="22" y="64" width="34" height="42" rx="3" fill="#ffd98f" opacity=".55"/>
-    <rect x="134" y="64" width="34" height="42" rx="3" fill="#ffd98f" opacity=".55"/>
-    <rect x="-8" y="124" width="206" height="8" fill="#d9ccb6"/>
+  <path d="M700 640 C860 520 980 470 1140 500 C1300 530 1420 470 1600 430 L1600 700 L700 700 Z" fill="#0d4f2a"/>
+  <path d="M0 660 C200 560 380 610 560 570 C720 540 800 590 920 640 L920 1000 L0 1000 Z" fill="#0f6b34"/>
+  <path d="M0 750 C180 670 340 720 520 680 C680 650 790 720 960 790 L960 1000 L0 1000 Z" fill="#0a4a25"/>
+  <path d="M0 860 C240 790 420 830 640 800 C820 775 960 830 1100 890 L1100 1000 L0 1000 Z" fill="#050f09"/>
+  <g transform="translate(250 612)">
+    <rect x="0" y="40" width="190" height="86" fill="#fff4cf"/>
+    <path d="M-14 42 L95 -12 L204 42 Z" fill="#fdb913"/>
+    <rect x="150" y="-6" width="20" height="40" fill="#f2dc93"/>
+    <rect x="22" y="64" width="34" height="42" rx="3" fill="#0b3d20"/>
+    <rect x="78" y="64" width="34" height="42" rx="3" fill="#0b3d20"/>
+    <rect x="134" y="64" width="34" height="42" rx="3" fill="#0b3d20"/>
+    <rect x="22" y="64" width="34" height="42" rx="3" fill="#ffd54a" opacity=".6"/>
+    <rect x="134" y="64" width="34" height="42" rx="3" fill="#ffd54a" opacity=".6"/>
+    <rect x="-8" y="124" width="206" height="8" fill="#2b2b2b"/>
   </g>
-  <g fill="#123a2f">
-    <path d="M520 820 C515 740 530 680 560 640 C548 700 548 760 552 820 Z"/>
-    <path d="M560 640 C520 640 485 660 470 690 C505 668 535 660 560 640 Z"/>
-    <path d="M560 640 C600 630 640 648 660 680 C625 660 592 652 560 640 Z"/>
-    <path d="M560 640 C545 610 515 600 490 606 C520 612 540 622 560 640 Z"/>
-    <path d="M560 640 C580 606 615 598 640 608 C608 612 584 622 560 640 Z"/>
-    <path d="M110 900 C106 830 118 780 142 748 C134 800 134 850 138 900 Z"/>
-    <path d="M142 748 C108 750 82 768 72 792 C100 776 122 766 142 748 Z"/>
-    <path d="M142 748 C176 742 206 756 220 782 C192 766 166 758 142 748 Z"/>
-  </g>
-  <g fill="#fff" opacity=".9">
-    <path d="M1320 360 q10 -10 20 0 q10 -10 20 0 q-10 4 -20 12 q-10 -8 -20 -12z"/>
-    <path d="M1400 310 q8 -8 16 0 q8 -8 16 0 q-8 3 -16 10 q-8 -7 -16 -10z"/>
+  <g fill="#050f09">
+    <path d="M520 840 C515 760 530 700 560 660 C548 720 548 780 552 840 Z"/>
+    <path d="M560 660 C520 660 485 680 470 710 C505 688 535 680 560 660 Z"/>
+    <path d="M560 660 C600 650 640 668 660 700 C625 680 592 672 560 660 Z"/>
+    <path d="M560 660 C545 630 515 620 490 626 C520 632 540 642 560 660 Z"/>
+    <path d="M560 660 C580 626 615 618 640 628 C608 632 584 642 560 660 Z"/>
+    <path d="M110 920 C106 850 118 800 142 768 C134 820 134 870 138 920 Z"/>
+    <path d="M142 768 C108 770 82 788 72 812 C100 796 122 786 142 768 Z"/>
+    <path d="M142 768 C176 762 206 776 220 802 C192 786 166 778 142 768 Z"/>
+    <path d="M1380 780 C1376 720 1388 676 1410 648 C1404 692 1404 740 1408 780 Z"/>
+    <path d="M1410 648 C1380 650 1356 666 1348 688 C1372 674 1392 664 1410 648 Z"/>
+    <path d="M1410 648 C1440 642 1466 656 1478 678 C1454 664 1432 656 1410 648 Z"/>
   </g>
 </svg>

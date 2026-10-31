@@ -13,12 +13,12 @@ const appShell = document.querySelector(".app-shell");
 const authForm = document.querySelector("#auth-form");
 const authMessage = document.querySelector("#auth-message");
 const authSubmit = document.querySelector("#auth-submit");
+const authMode = () => authForm.dataset.mode || "signin";
 let currentView = "overview";
 let editor = { type: null, id: null };
 let toastTimer;
 let supabase = null;
 let currentUser = null;
-let authMode = "signin";
 let loadingUserId = null;
 
 const dateOffset = (days) => {
@@ -110,7 +110,7 @@ async function handleSession(session) {
   const name = displayName();
   document.querySelector("#profile-name").textContent = name;
   document.querySelectorAll(".avatar").forEach((avatar) => { avatar.textContent = initials(name); });
-  document.querySelector("#page-title").innerHTML = `Welcome, ${escapeHtml(name)} <span class="wave">✦</span>`;
+  document.querySelector("#page-title").innerHTML = `${greeting()}, ${escapeHtml(name)} <span class="wave">✦</span>`;
   viewRoot.innerHTML = `<section class="panel"><div class="empty-state">Loading your workspace…</div></section>`;
   try {
     await loadData();
@@ -165,6 +165,27 @@ function displayName() {
   if (fullName) return fullName;
   const emailName = currentUser?.email?.split("@")[0] || "Landlord";
   return emailName.split(/[._-]/).filter(Boolean).map((part) => part[0].toUpperCase() + part.slice(1)).join(" ") || "Landlord";
+}
+
+function greeting() {
+  const hour = new Date().getHours();
+  return hour < 12 ? "Good morning" : hour < 18 ? "Good afternoon" : "Good evening";
+}
+
+function nightsBetween(start, end) {
+  return Math.round((parseDate(end) - parseDate(start)) / 86400000);
+}
+
+function occupancyFor(property, today) {
+  const windowEnd = localDate(new Date(parseDate(today).getTime() + 30 * 86400000));
+  const nights = data.reservations
+    .filter((reservation) => reservation.propertyId === property.id && reservation.status !== "cancelled")
+    .reduce((total, reservation) => {
+      const from = reservation.checkIn > today ? reservation.checkIn : today;
+      const to = reservation.checkOut < windowEnd ? reservation.checkOut : windowEnd;
+      return total + Math.max(0, nightsBetween(from, to));
+    }, 0);
+  return { nights, percent: Math.min(100, Math.round((nights / 30) * 100)) };
 }
 
 function storedCurrency() {
@@ -226,7 +247,7 @@ function navTo(view) {
   document.querySelector("#breadcrumb-current").textContent = labels[view];
   const title = document.querySelector("#page-title");
   const subtitle = document.querySelector("#page-subtitle");
-  title.innerHTML = view === "overview" ? `Welcome, ${escapeHtml(displayName())} <span class="wave">✦</span>` : labels[view];
+  title.innerHTML = view === "overview" ? `${greeting()}, ${escapeHtml(displayName())} <span class="wave">✦</span>` : labels[view];
   subtitle.textContent = {
     overview: "Here’s what’s happening with your stays.",
     reservations: "Keep guest details and upcoming stays organized.",
@@ -297,7 +318,16 @@ function renderOverview() {
           }).join("") : `<div class="empty-state"><strong>Nothing on the calendar</strong><p>New stays will appear here.</p></div>`}
         </div>
       </section>
-    </div>`;
+    </div>
+    <section class="panel occupancy-panel">
+      <div class="panel-heading"><div><h2>Occupancy</h2><p>Booked nights over the next 30 days</p></div></div>
+      <div class="occupancy-list">
+        ${data.properties.length ? data.properties.map((property) => {
+          const { nights, percent } = occupancyFor(property, today);
+          return `<div class="occupancy-row"><div class="occupancy-name"><strong>${escapeHtml(property.name)}</strong><span>${escapeHtml(property.location)}</span></div><div class="occupancy-bar" role="img" aria-label="${percent}% occupied"><span style="width:${percent}%"></span></div><div class="occupancy-value"><strong>${percent}%</strong><span>${nights} ${nights === 1 ? "night" : "nights"}</span></div></div>`;
+        }).join("") : `<div class="empty-state"><strong>No properties yet</strong><p>Add a property to track how often it's booked.</p></div>`}
+      </div>
+    </section>`;
 }
 
 function renderReservations() {
@@ -592,32 +622,13 @@ document.querySelector("#auth-forgot").addEventListener("click", async () => {
   }
 });
 
-document.querySelector("#auth-switch").addEventListener("click", () => {
-  authMode = authMode === "signin" ? "signup" : "signin";
-  const signingUp = authMode === "signup";
-  document.querySelector("#auth-name-field").hidden = !signingUp;
-  document.querySelector("#auth-confirm-field").hidden = !signingUp;
-  document.querySelector("#auth-forgot").hidden = signingUp;
-  document.querySelector("#auth-eyebrow").textContent = signingUp ? "START YOUR HOST WORKSPACE" : "YOUR HOST WORKSPACE";
-  document.querySelector("#auth-title").textContent = signingUp ? "Create your account" : "Welcome back";
-  document.querySelector("#auth-subtitle").textContent = signingUp
-    ? "Create an account to keep your properties and stays in sync."
-    : "Sign in to manage your properties and stays.";
-  document.querySelector("#auth-password").autocomplete = signingUp ? "new-password" : "current-password";
-  document.querySelector("#auth-switch-copy").textContent = signingUp ? "Already have an account?" : "New to Havenstay?";
-  document.querySelector("#auth-switch").textContent = signingUp ? "Sign in" : "Create an account";
-  authSubmit.textContent = signingUp ? "Create account" : "Sign in";
-  authSubmit.disabled = !supabase;
-  setAuthMessage("");
-});
-
 authForm.addEventListener("submit", async (event) => {
   event.preventDefault();
   if (!supabase) return;
   const email = document.querySelector("#auth-email").value.trim();
   const password = passwordInput.value;
   const name = document.querySelector("#auth-name").value.trim();
-  const signingUp = authMode === "signup";
+  const signingUp = authMode() === "signup";
   if (!authForm.checkValidity()) {
     setAuthMessage(!email || !document.querySelector("#auth-email").validity.valid
       ? "Enter a valid email address."
@@ -635,10 +646,10 @@ authForm.addEventListener("submit", async (event) => {
     return;
   }
   authSubmit.disabled = true;
-  authSubmit.textContent = authMode === "signup" ? "Creating account…" : "Signing in…";
+  authSubmit.textContent = authMode() === "signup" ? "Creating account…" : "Signing in…";
   setAuthMessage("");
   try {
-    if (authMode === "signup") {
+    if (authMode() === "signup") {
       const { data: result, error } = await supabase.auth.signUp({ email, password, options: { data: { full_name: name } } });
       if (error) throw error;
       if (!result.session) {
@@ -653,7 +664,7 @@ authForm.addEventListener("submit", async (event) => {
     setAuthMessage(error.message || "Could not authenticate. Please try again.");
   } finally {
     authSubmit.disabled = false;
-    authSubmit.textContent = authMode === "signup" ? "Create account" : "Sign in";
+    authSubmit.textContent = authMode() === "signup" ? "Create account" : "Sign in";
   }
 });
 

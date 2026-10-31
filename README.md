@@ -22,6 +22,8 @@ Set `VITE_SUPABASE_URL` and `VITE_SUPABASE_ANON_KEY` in `.env`, then start the a
 npm run dev
 ```
 
+Open the app through the Vite server (`npm run dev` or `npm run preview`); opening `index.html` directly from disk will not work. Sign-in and sign-up are linkable at `/#signin` and `/#signup`.
+
 Use `npm run build` to create the deployable static site in `dist/`. Set the same two `VITE_` variables in your hosting provider before building.
 
 ## Features
