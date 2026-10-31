@@ -3,134 +3,103 @@
   <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
-    <meta name="theme-color" content="#f5f7f5">
-    <meta name="description" content="A simple property and reservation manager for independent landlords.">
-    <title>Havenstay — Landlord dashboard</title>
-    <link rel="stylesheet" href="styles.css">
-    <script type="module" src="auth-ui.js"></script>
-    <script type="module" src="app.js"></script>
+    <meta name="theme-color" content="#000000">
+    <meta name="description" content="Havenstay: the all-in-one platform for Jamaican hosts. Sync Airbnb, Vrbo and Booking.com calendars, message guests, automate cleaning, report to owners and take direct bookings.">
+    <title>Havenstay: run your stays, one love organized</title>
+    <link rel="stylesheet" href="/landing.css">
+    <script type="module" src="/landing.js"></script>
   </head>
   <body>
-    <main id="auth-screen" class="auth-screen">
-      <p class="auth-tagline" aria-hidden="true">Your stays,<br><em>one love</em><br>organized.<span class="auth-kicker">Made for Jamaican hosts</span></p>
-      <section class="auth-card" aria-labelledby="auth-title">
-        <a class="brand auth-brand" href="#" aria-label="Havenstay home">
-          <span class="brand-mark" aria-hidden="true">h</span>
-          <span>havenstay</span>
-        </a>
-        <p class="eyebrow" id="auth-eyebrow">YOUR HOST WORKSPACE</p>
-        <h1 id="auth-title">Welcome back</h1>
-        <p class="auth-subtitle" id="auth-subtitle">Sign in to manage your properties and stays.</p>
-        <div id="auth-config-warning" class="auth-message auth-warning" hidden>
-          Add your Supabase project URL and publishable key to <code>.env</code>, then restart the app.
+    <header class="nav">
+      <div class="nav-inner">
+        <a class="logo" href="/"><span class="logo-mark">h</span>havenstay</a>
+        <nav class="nav-links" aria-label="Main">
+          <a href="#features">Features</a>
+          <a href="#how">How it works</a>
+          <a href="#savings">Savings</a>
+          <a href="#faq">FAQ</a>
+        </nav>
+        <div class="nav-cta"><a class="link" href="/app.html#signin">Sign in</a><a class="btn btn-gold" href="/app.html#signup">Get started free</a></div>
+      </div>
+    </header>
+
+    <main>
+      <section class="hero">
+        <div class="hero-inner">
+          <p class="kicker">Made for Jamaican hosts</p>
+          <h1>Your stays,<br><span>one love</span> organized.</h1>
+          <p class="lead">Havenstay brings your Airbnb, Vrbo and Booking.com calendars, guest messages, cleaning crews, owner reports and a direct booking website into one place, so you never double-book and keep more of every booking.</p>
+          <div class="hero-actions"><a class="btn btn-gold btn-lg" href="/app.html#signup">Create your free account</a><a class="btn btn-ghost btn-lg" href="#features">See what's inside</a></div>
+          <ul class="hero-points"><li>No double bookings</li><li>No card required</li><li>Keep 100% of direct bookings</li></ul>
         </div>
-        <form id="auth-form" novalidate data-mode="signin">
-          <label class="auth-field" id="auth-name-field" for="auth-name" hidden>Full name
-            <input id="auth-name" name="name" type="text" autocomplete="name" placeholder="Your name">
-          </label>
-          <label class="auth-field" for="auth-email">Email address
-            <input id="auth-email" name="email" type="email" autocomplete="email" required placeholder="you@example.com">
-          </label>
-          <label class="auth-field" for="auth-password">
-            <span class="auth-label-row">Password <button class="auth-link" id="auth-forgot" type="button">Forgot password?</button></span>
-            <span class="password-wrap">
-              <input id="auth-password" name="password" type="password" autocomplete="current-password" required minlength="8" placeholder="At least 8 characters">
-              <button class="password-toggle" id="password-toggle" type="button" aria-label="Show password" aria-pressed="false">Show</button>
-            </span>
-          </label>
-          <label class="auth-field" id="auth-confirm-field" for="auth-confirm" hidden>Confirm password
-            <input id="auth-confirm" name="confirm" type="password" autocomplete="new-password" minlength="8" placeholder="Repeat your password">
-          </label>
-          <p id="auth-message" class="auth-message" role="status" aria-live="polite"></p>
-          <button class="button button-primary auth-submit" id="auth-submit" type="submit">Sign in</button>
-        </form>
-        <p class="auth-switch"><span id="auth-switch-copy">New to Havenstay?</span> <a id="auth-switch" href="#signup">Create an account</a></p>
+        <div class="mock" aria-hidden="true">
+          <div class="mock-bar"><i></i><i></i><i></i></div>
+          <div class="mock-body">
+            <div class="mock-side"><b>havenstay</b><span class="on">Overview</span><span>Reservations</span><span>Channels</span><span>Inbox</span><span>Operations</span><span>Reports</span></div>
+            <div class="mock-main">
+              <div class="mock-banner">Good morning, Marcia ✦</div>
+              <div class="mock-stats"><div><small>Occupancy</small><strong>86%</strong></div><div><small>ADR</small><strong>$142</strong></div><div><small>Revenue</small><strong>$9,430</strong></div></div>
+              <div class="mock-cal"><span class="a"></span><span class="a"></span><span class="v"></span><span class="v"></span><span class="v"></span><span class="d"></span><span class="d"></span><span class="b"></span><span class="b"></span><span class="x"></span><span class="x"></span><span class="d"></span></div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section class="trust"><p>Works with the platforms your guests already use</p>
+        <div class="logos"><span>Airbnb</span><span>Vrbo</span><span>Booking.com</span><span>WhatsApp</span><span>Email</span></div></section>
+
+      <section id="features" class="section">
+        <div class="section-head"><p class="kicker dark">Everything in one place</p><h2>Run your whole rental business from one dashboard</h2><p>Six tools that used to take six apps, built around how Jamaican hosts really work.</p></div>
+        <div class="features">
+          <article class="feature"><span class="ico">⇄</span><h3>Channel management &amp; multi-calendar</h3><p>Sync availability with Airbnb, Vrbo and Booking.com. See every property on one calendar and get flagged the moment two stays overlap.</p></article>
+          <article class="feature"><span class="ico">✉</span><h3>Unified inbox</h3><p>Guest conversations from every channel in a single thread view, with booking confirmation, pre-arrival, check-out and review-request messages sent on time.</p></article>
+          <article class="feature"><span class="ico">✓</span><h3>Operations &amp; cleaning</h3><p>A cleaning task is created after every checkout and assigned to your crew. Notify by WhatsApp and collect photo proof when the job is done.</p></article>
+          <article class="feature"><span class="ico">$</span><h3>Owner reporting</h3><p>Track revenue, occupancy, ADR and expenses. Manage units for other owners and send them a clean monthly statement with your fee and their payout.</p></article>
+          <article class="feature"><span class="ico">◎</span><h3>Direct booking website</h3><p>Launch your own branded booking page. Guests pick dates, see the total and request to book, with no commission and live availability.</p></article>
+          <article class="feature"><span class="ico">⌂</span><h3>Properties &amp; reservations</h3><p>Every property, guest and stay organized in one clean list, with secure sign-in and data that only you can see.</p></article>
+        </div>
+      </section>
+
+      <section id="how" class="section dark">
+        <div class="section-head"><p class="kicker">Up and running in minutes</p><h2>Three steps to a calmer week</h2></div>
+        <ol class="steps">
+          <li><span>1</span><h3>Add your properties</h3><p>Create your account and add your places, rates and the owners you manage them for.</p></li>
+          <li><span>2</span><h3>Connect your channels</h3><p>Paste each channel's calendar link. Reservations import and your calendars stay in step.</p></li>
+          <li><span>3</span><h3>Let the automations work</h3><p>Messages, cleaning tasks and statements are prepared for you. You just review and send.</p></li>
+        </ol>
+      </section>
+
+      <section id="savings" class="section">
+        <div class="savings">
+          <div><p class="kicker dark">Keep more of what you earn</p><h2>Direct bookings skip the commission</h2><p>Online travel agencies typically take around 15% of every booking. A branded booking site lets returning guests and word-of-mouth book you directly.</p>
+            <a class="btn btn-green" href="/app.html#signup">Start taking direct bookings</a></div>
+          <div class="calc" id="calc">
+            <label>Monthly bookings value <output id="calc-out">$5,000</output></label>
+            <input id="calc-range" type="range" min="1000" max="30000" step="500" value="5000" aria-label="Monthly bookings value">
+            <div class="calc-result"><small>Fees you could save each month at 15%</small><strong id="calc-save">$750</strong><small>That's <b id="calc-year">$9,000</b> a year if it were all direct.</small></div>
+          </div>
+        </div>
+      </section>
+
+      <section id="faq" class="section">
+        <div class="section-head"><p class="kicker dark">Questions</p><h2>Good to know</h2></div>
+        <div class="faq">
+          <details><summary>How do calendars sync with Airbnb, Vrbo and Booking.com?</summary><p>Using each platform's iCal calendar link. You paste theirs into Havenstay, and paste your Havenstay link back into theirs. Platforms refresh these every few hours, so it isn't instant, and Havenstay flags any overlap it sees.</p></details>
+          <details><summary>Can I manage properties for other owners?</summary><p>Yes. Assign an owner and a management fee to each property, log expenses, and generate a printable monthly statement showing revenue, fees and net payout.</p></details>
+          <details><summary>Do my guests pay online?</summary><p>Not yet. Guests send a booking request on your website and you confirm it and arrange payment with them directly.</p></details>
+          <details><summary>Is my data private?</summary><p>Yes. Your data is stored in Supabase with row-level security, so each account can only ever read its own records.</p></details>
+          <details><summary>What does it cost?</summary><p>You can create an account and start for free.</p></details>
+        </div>
+      </section>
+
+      <section class="cta">
+        <h2>Ready for one love, organized?</h2>
+        <p>Set up your first property in minutes.</p>
+        <div class="hero-actions center"><a class="btn btn-gold btn-lg" href="/app.html#signup">Create your free account</a><a class="btn btn-ghost btn-lg" href="/app.html#signin">Sign in</a></div>
       </section>
     </main>
-    <div class="app-shell" hidden>
-      <aside class="sidebar">
-        <a class="brand" href="#" aria-label="Havenstay home">
-          <span class="brand-mark" aria-hidden="true">h</span>
-          <span>havenstay</span>
-        </a>
-        <p class="side-label">Workspace</p>
-        <nav class="primary-nav" aria-label="Main navigation">
-          <button class="nav-link active" data-view="overview"><span class="nav-icon">◫</span>Overview</button>
-          <button class="nav-link" data-view="reservations"><span class="nav-icon">▤</span>Reservations</button>
-          <button class="nav-link" data-view="properties"><span class="nav-icon">⌂</span>Properties</button>
-          <button class="nav-link" data-view="channels"><span class="nav-icon">⇄</span>Channels<span class="nav-badge" id="channels-badge" hidden>0</span></button>
-          <button class="nav-link" data-view="inbox"><span class="nav-icon">✉</span>Inbox<span class="nav-badge" id="inbox-badge" hidden>0</span></button>
-          <button class="nav-link" data-view="operations"><span class="nav-icon">✓</span>Operations<span class="nav-badge" id="ops-badge" hidden>0</span></button>
-          <button class="nav-link" data-view="reports"><span class="nav-icon">$</span>Reports</button>
-          <button class="nav-link" data-view="website"><span class="nav-icon">◎</span>Website</button>
-        </nav>
-        <div class="sidebar-bottom">
-          <div class="help-card">
-            <span class="help-icon">?</span>
-            <strong>Need a hand?</strong>
-            <p>Your stays, all in one place.</p>
-          </div>
-          <div class="profile">
-            <span class="avatar">JL</span>
-            <span class="profile-copy"><strong id="profile-name">Landlord</strong><small>Property owner</small></span>
-            <button class="profile-more" id="logout-button" type="button">Sign out</button>
-          </div>
-        </div>
-      </aside>
 
-      <main class="main-content">
-        <header class="topbar">
-          <span class="breadcrumb">Workspace <span>/</span> <strong id="breadcrumb-current">Overview</strong></span>
-          <div class="topbar-actions">
-            <label class="currency-picker">Currency
-              <select id="currency-select" aria-label="Display currency">
-                <option value="USD">USD $</option>
-                <option value="JMD">JMD $</option>
-                <option value="GBP">GBP £</option>
-                <option value="EUR">EUR €</option>
-                <option value="CAD">CAD $</option>
-              </select>
-            </label>
-            <button class="icon-button notification-button" aria-label="Notifications">♧<span></span></button>
-            <span class="avatar top-avatar">JL</span>
-          </div>
-        </header>
-
-        <div class="page-wrap">
-          <div class="page-heading">
-            <div>
-              <p class="eyebrow" id="today-label"></p>
-              <h1 id="page-title">Good morning, Jamie <span class="wave">✦</span></h1>
-              <p class="page-subtitle" id="page-subtitle">Here’s what’s happening with your stays.</p>
-            </div>
-            <div class="heading-actions">
-              <button class="button button-secondary" id="add-property-button">＋ Add property</button>
-              <button class="button button-primary" id="add-reservation-button">＋ New reservation</button>
-            </div>
-          </div>
-
-          <section id="view-root" aria-live="polite"></section>
-          <footer class="page-footer">Made for hosts who like things simple <span>·</span> Your workspace is private to your account</footer>
-        </div>
-      </main>
-    </div>
-
-    <dialog id="editor-dialog" class="editor-dialog">
-      <form id="editor-form" method="dialog">
-        <div class="dialog-heading">
-          <div>
-            <p class="eyebrow" id="dialog-eyebrow">GET STARTED</p>
-            <h2 id="dialog-title">Add a property</h2>
-          </div>
-          <button class="icon-button close-button" type="button" aria-label="Close dialog" data-close-dialog>×</button>
-        </div>
-        <div id="form-fields" class="form-fields"></div>
-        <div class="dialog-actions">
-          <button class="button button-secondary" type="button" data-close-dialog>Cancel</button>
-          <button class="button button-primary" type="submit" id="save-button">Save property</button>
-        </div>
-      </form>
-    </dialog>
-    <div id="toast" class="toast" role="status" aria-live="polite"></div>
+    <footer class="foot"><div class="foot-inner"><a class="logo" href="/"><span class="logo-mark">h</span>havenstay</a><p>Made for Jamaican hosts. Walk good.</p><p class="small">© <span id="year"></span> Havenstay</p></div></footer>
+    <script type="module" src="/landing-ui.js"></script>
   </body>
 </html>

@@ -1,0 +1,136 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="theme-color" content="#f5f7f5">
+    <meta name="description" content="A simple property and reservation manager for independent landlords.">
+    <title>Havenstay — Landlord dashboard</title>
+    <link rel="stylesheet" href="styles.css">
+    <script type="module" src="auth-ui.js"></script>
+    <script type="module" src="app.js"></script>
+  </head>
+  <body>
+    <main id="auth-screen" class="auth-screen">
+      <p class="auth-tagline" aria-hidden="true">Your stays,<br><em>one love</em><br>organized.<span class="auth-kicker">Made for Jamaican hosts</span></p>
+      <section class="auth-card" aria-labelledby="auth-title">
+        <a class="brand auth-brand" href="#" aria-label="Havenstay home">
+          <span class="brand-mark" aria-hidden="true">h</span>
+          <span>havenstay</span>
+        </a>
+        <p class="eyebrow" id="auth-eyebrow">YOUR HOST WORKSPACE</p>
+        <h1 id="auth-title">Welcome back</h1>
+        <p class="auth-subtitle" id="auth-subtitle">Sign in to manage your properties and stays.</p>
+        <div id="auth-config-warning" class="auth-message auth-warning" hidden>
+          Supabase isn't configured for this deployment. Add <code>VITE_SUPABASE_URL</code> and <code>VITE_SUPABASE_ANON_KEY</code> in your host settings (or <code>.env</code> locally), then redeploy.
+        </div>
+        <form id="auth-form" novalidate data-mode="signin">
+          <label class="auth-field" id="auth-name-field" for="auth-name" hidden>Full name
+            <input id="auth-name" name="name" type="text" autocomplete="name" placeholder="Your name">
+          </label>
+          <label class="auth-field" for="auth-email">Email address
+            <input id="auth-email" name="email" type="email" autocomplete="email" required placeholder="you@example.com">
+          </label>
+          <label class="auth-field" for="auth-password">
+            <span class="auth-label-row">Password <button class="auth-link" id="auth-forgot" type="button">Forgot password?</button></span>
+            <span class="password-wrap">
+              <input id="auth-password" name="password" type="password" autocomplete="current-password" required minlength="8" placeholder="At least 8 characters">
+              <button class="password-toggle" id="password-toggle" type="button" aria-label="Show password" aria-pressed="false">Show</button>
+            </span>
+          </label>
+          <label class="auth-field" id="auth-confirm-field" for="auth-confirm" hidden>Confirm password
+            <input id="auth-confirm" name="confirm" type="password" autocomplete="new-password" minlength="8" placeholder="Repeat your password">
+          </label>
+          <p id="auth-message" class="auth-message" role="status" aria-live="polite"></p>
+          <button class="button button-primary auth-submit" id="auth-submit" type="submit">Sign in</button>
+        </form>
+        <p class="auth-switch"><span id="auth-switch-copy">New to Havenstay?</span> <a id="auth-switch" href="#signup">Create an account</a></p>
+      </section>
+    </main>
+    <div class="app-shell" hidden>
+      <aside class="sidebar">
+        <a class="brand" href="#" aria-label="Havenstay home">
+          <span class="brand-mark" aria-hidden="true">h</span>
+          <span>havenstay</span>
+        </a>
+        <p class="side-label">Workspace</p>
+        <nav class="primary-nav" aria-label="Main navigation">
+          <button class="nav-link active" data-view="overview"><span class="nav-icon">◫</span>Overview</button>
+          <button class="nav-link" data-view="reservations"><span class="nav-icon">▤</span>Reservations</button>
+          <button class="nav-link" data-view="properties"><span class="nav-icon">⌂</span>Properties</button>
+          <button class="nav-link" data-view="channels"><span class="nav-icon">⇄</span>Channels<span class="nav-badge" id="channels-badge" hidden>0</span></button>
+          <button class="nav-link" data-view="inbox"><span class="nav-icon">✉</span>Inbox<span class="nav-badge" id="inbox-badge" hidden>0</span></button>
+          <button class="nav-link" data-view="operations"><span class="nav-icon">✓</span>Operations<span class="nav-badge" id="ops-badge" hidden>0</span></button>
+          <button class="nav-link" data-view="reports"><span class="nav-icon">$</span>Reports</button>
+          <button class="nav-link" data-view="website"><span class="nav-icon">◎</span>Website</button>
+        </nav>
+        <div class="sidebar-bottom">
+          <div class="help-card">
+            <span class="help-icon">?</span>
+            <strong>Need a hand?</strong>
+            <p>Your stays, all in one place.</p>
+          </div>
+          <div class="profile">
+            <span class="avatar">JL</span>
+            <span class="profile-copy"><strong id="profile-name">Landlord</strong><small>Property owner</small></span>
+            <button class="profile-more" id="logout-button" type="button">Sign out</button>
+          </div>
+        </div>
+      </aside>
+
+      <main class="main-content">
+        <header class="topbar">
+          <span class="breadcrumb">Workspace <span>/</span> <strong id="breadcrumb-current">Overview</strong></span>
+          <div class="topbar-actions">
+            <label class="currency-picker">Currency
+              <select id="currency-select" aria-label="Display currency">
+                <option value="USD">USD $</option>
+                <option value="JMD">JMD $</option>
+                <option value="GBP">GBP £</option>
+                <option value="EUR">EUR €</option>
+                <option value="CAD">CAD $</option>
+              </select>
+            </label>
+            <button class="icon-button notification-button" aria-label="Notifications">♧<span></span></button>
+            <span class="avatar top-avatar">JL</span>
+          </div>
+        </header>
+
+        <div class="page-wrap">
+          <div class="page-heading">
+            <div>
+              <p class="eyebrow" id="today-label"></p>
+              <h1 id="page-title">Good morning, Jamie <span class="wave">✦</span></h1>
+              <p class="page-subtitle" id="page-subtitle">Here’s what’s happening with your stays.</p>
+            </div>
+            <div class="heading-actions">
+              <button class="button button-secondary" id="add-property-button">＋ Add property</button>
+              <button class="button button-primary" id="add-reservation-button">＋ New reservation</button>
+            </div>
+          </div>
+
+          <section id="view-root" aria-live="polite"></section>
+          <footer class="page-footer">Made for hosts who like things simple <span>·</span> Your workspace is private to your account</footer>
+        </div>
+      </main>
+    </div>
+
+    <dialog id="editor-dialog" class="editor-dialog">
+      <form id="editor-form" method="dialog">
+        <div class="dialog-heading">
+          <div>
+            <p class="eyebrow" id="dialog-eyebrow">GET STARTED</p>
+            <h2 id="dialog-title">Add a property</h2>
+          </div>
+          <button class="icon-button close-button" type="button" aria-label="Close dialog" data-close-dialog>×</button>
+        </div>
+        <div id="form-fields" class="form-fields"></div>
+        <div class="dialog-actions">
+          <button class="button button-secondary" type="button" data-close-dialog>Cancel</button>
+          <button class="button button-primary" type="submit" id="save-button">Save property</button>
+        </div>
+      </form>
+    </dialog>
+    <div id="toast" class="toast" role="status" aria-live="polite"></div>
+  </body>
+</html>

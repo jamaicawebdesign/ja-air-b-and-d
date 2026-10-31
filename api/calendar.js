@@ -3,8 +3,8 @@ const stamp = (iso) => iso.replace(/-/g, "");
 export default async function handler(req, res) {
   const token = String(req.query.token || "").replace(/\.ics$/, "");
   if (!/^[0-9a-f-]{36}$/i.test(token)) return res.status(400).send("Invalid token");
-  const url = process.env.VITE_SUPABASE_URL;
-  const key = process.env.VITE_SUPABASE_ANON_KEY;
+  const url = process.env.VITE_SUPABASE_URL || "https://lqzcfqaayrneavkfdonm.supabase.co";
+  const key = process.env.VITE_SUPABASE_ANON_KEY || "sb_publishable_JyJIWFyaun2V_mZW81S2Sw_vqE7KtA2";
   if (!url || !key) return res.status(500).send("Supabase is not configured");
   const response = await fetch(`${url}/rest/v1/rpc/channel_feed`, {
     method: "POST",

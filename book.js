@@ -1,6 +1,7 @@
 "use strict";
 
 import { createClient } from "@supabase/supabase-js";
+import { SUPABASE_KEY, SUPABASE_URL } from "./supabase-config.js";
 
 const $ = (selector) => document.querySelector(selector);
 const statusBox = $("#status");
@@ -24,8 +25,8 @@ function fail(message) {
 }
 
 async function init() {
-  const url = import.meta.env.VITE_SUPABASE_URL;
-  const key = import.meta.env.VITE_SUPABASE_ANON_KEY;
+  const url = SUPABASE_URL;
+  const key = SUPABASE_KEY;
   if (!slug) return fail("This booking link is incomplete.");
   if (!url || !key) return fail("This site is not configured yet.");
   supabase = createClient(url, key);
