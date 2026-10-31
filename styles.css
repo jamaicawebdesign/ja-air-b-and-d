@@ -327,7 +327,7 @@ tr:last-child td { border-bottom: 0; }
   align-items: center;
   justify-content: space-between;
   gap: 40px;
-  background: linear-gradient(90deg, #0f2f2580, transparent 65%), url("/auth-bg.svg") center / cover no-repeat, #1f5c4a;
+  background: linear-gradient(90deg, #050f09a6, transparent 65%), url("/auth-bg.svg") center / cover no-repeat, #0b3d20;
 }
 .auth-screen[hidden] { display: none; }
 .auth-tagline {
@@ -340,6 +340,8 @@ tr:last-child td { border-bottom: 0; }
   text-shadow: 0 2px 24px #0a241a66;
 }
 .auth-card {
+  position: relative;
+  overflow: hidden;
   width: min(100%, 410px);
   flex: 0 0 auto;
   padding: 31px;
@@ -349,6 +351,18 @@ tr:last-child td { border-bottom: 0; }
   backdrop-filter: blur(14px);
   box-shadow: 0 24px 70px #0a241a55;
 }
+.auth-card::before {
+  position: absolute;
+  inset: 0 0 auto;
+  height: 6px;
+  content: "";
+  background: linear-gradient(90deg, #009b3a 0 33.3%, #fed100 33.3% 66.6%, #000 66.6%);
+}
+.auth-tagline em { color: #fed100; font-style: normal; }
+.auth-kicker { display: block; margin-top: 18px; color: #fed100; font: 700 12px "Segoe UI", sans-serif; letter-spacing: 2px; text-transform: uppercase; text-shadow: none; }
+.auth-card .button-primary { background: #009b3a; }
+.auth-card .button-primary:hover { background: #007a2d; color: #fed100; }
+.auth-card .eyebrow { color: #b58a00; }
 .auth-brand { margin: 0 0 35px; padding: 0; }
 .auth-card h1 { margin-bottom: 7px; font-size: 24px; }
 .auth-subtitle { margin: 0 0 22px; color: #858e89; font-size: 12px; line-height: 1.6; }
@@ -390,7 +404,7 @@ tr:last-child td { border-bottom: 0; }
   .property-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 }
 @media (max-width: 760px) {
-  .auth-screen { flex-direction: column; justify-content: center; padding: 28px 16px; gap: 24px; background: linear-gradient(180deg, #0f2f2599, transparent 70%), url("/auth-bg.svg") 30% center / cover no-repeat, #1f5c4a; }
+  .auth-screen { flex-direction: column; justify-content: center; padding: 28px 16px; gap: 24px; background: linear-gradient(180deg, #050f09b3, transparent 70%), url("/auth-bg.svg") 30% center / cover no-repeat, #0b3d20; }
   .auth-tagline { align-self: auto; margin: 0; max-width: none; font-size: 30px; letter-spacing: -1.2px; text-align: center; }
   .sidebar { position: static; width: auto; height: auto; padding: 12px 14px 0; border-right: 0; border-bottom: 1px solid #edf0ed; }
   .brand { padding: 0 3px 11px; font-size: 18px; }
