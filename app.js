@@ -3,6 +3,7 @@
 import { createClient } from "@supabase/supabase-js";
 import { SUPABASE_KEY, SUPABASE_URL } from "./supabase-config.js";
 import { PLATFORMS, findConflicts, parseIcal } from "./ical.js";
+import { COLORS, barChart, donutChart, lineChart, rankBars } from "./charts.js";
 import { CATEGORIES, monthRange, ownerPayout, propertyStats, statementHtml, sumStats } from "./reports.js";
 import { KINDS, ROLES, STATUSES, isOverdue, notifyLink, pickCleaner, smsLink, turnoversToCreate } from "./ops.js";
 import { CHANNELS, STARTER_TEMPLATES, TRIGGERS, deliveryLink, dueMessages, fillTemplate, matchAutoReply } from "./inbox.js";
@@ -198,6 +199,15 @@ function showApp() {
   appShell.hidden = false;
 }
 
+function paintUser() {
+  const name = displayName();
+  document.querySelector("#profile-name").textContent = name;
+  document.querySelector("#menu-name").textContent = name;
+  document.querySelector("#menu-trigger-name").textContent = name;
+  document.querySelector("#menu-email").textContent = currentUser?.email || "";
+  document.querySelectorAll(".avatar").forEach((avatar) => { avatar.textContent = initials(name); });
+}
+
 async function handleSession(session) {
   const nextUser = session?.user || null;
   if (!nextUser) {
@@ -212,8 +222,7 @@ async function handleSession(session) {
   loadingUserId = nextUser.id;
   showApp();
   const name = displayName();
-  document.querySelector("#profile-name").textContent = name;
-  document.querySelectorAll(".avatar").forEach((avatar) => { avatar.textContent = initials(name); });
+  paintUser();
   document.querySelector("#page-title").innerHTML = `${greeting()}, ${escapeHtml(name)} <span class="wave">✦</span>`;
   viewRoot.innerHTML = `<section class="panel"><div class="empty-state">Loading your workspace…</div></section>`;
   try {
@@ -427,6 +436,53 @@ function reservationRows(reservations) {
   }).join("");
 }
 
+function chartsHtml(today) {
+  const compact = (value) => new Intl.NumberFormat(undefined, { style: "currency", currency: currencyCode(), notation: "compact", maximumFractionDigits: 1 }).format(Number(value) || 0);
+  const base = today.slice(0, 7);
+  const months = [];
+  for (let i = 5; i >= 0; i -= 1) {
+    const [y, m] = base.split("-").map(Number);
+    const d = new Date(Date.UTC(y, m - 1 - i, 1));
+    months.push(`${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, "0")}`);
+  }
+  const monthly = months.map((ym) => {
+    const { start, end } = monthRange(ym);
+    return sumStats(data.properties.map((property) => propertyStats({ property, reservations: data.reservations, expenses: data.expenses, start, end })));
+  });
+  const monthLabels = months.map((ym) => new Date(`${ym}-01T00:00:00Z`).toLocaleDateString(undefined, { month: "short", timeZone: "UTC" }));
+  const hasMoney = monthly.some((entry) => entry.revenue > 0 || entry.expenses > 0);
+
+  const days = Array.from({ length: 30 }, (_, i) => localDate(new Date(parseDate(today).getTime() + i * 86400000)));
+  const active = data.reservations.filter((reservation) => reservation.status !== "cancelled");
+  const trend = days.map((day) => {
+    if (!data.properties.length) return 0;
+    const busy = new Set(active.filter((reservation) => reservation.checkIn <= day && reservation.checkOut > day).map((reservation) => reservation.propertyId));
+    return (busy.size / data.properties.length) * 100;
+  });
+  const trendLabels = days.map((day) => formatDate(day, { month: "short", day: "numeric" }));
+
+  const sourceColors = { direct: COLORS.green, airbnb: COLORS.pink, vrbo: COLORS.blue, booking: COLORS.navy, other: COLORS.gold };
+  const counts = {};
+  active.forEach((reservation) => { const key = reservation.source || "direct"; counts[key] = (counts[key] || 0) + 1; });
+  const slices = Object.entries(counts).map(([key, value]) => ({ label: PLATFORMS[key] || key.charAt(0).toUpperCase() + key.slice(1), value, color: sourceColors[key] || COLORS.purple }));
+
+  const { start, end } = monthRange(base);
+  const ranked = data.properties.map((property) => ({ label: property.name, value: propertyStats({ property, reservations: data.reservations, expenses: data.expenses, start, end }).revenue }))
+    .sort((a, b) => b.value - a.value).slice(0, 5).map((row) => ({ ...row, display: money(row.value) }));
+
+  const empty = (text) => `<div class="empty-state"><strong>${text}</strong><p>Add reservations to see this chart.</p></div>`;
+  return `<div class="charts-grid">
+    <section class="panel chart-panel wide"><div class="panel-heading"><div><h2>Revenue vs expenses</h2><p>Last 6 months</p></div></div>
+      ${hasMoney ? barChart({ labels: monthLabels, series: [{ label: "Revenue", color: COLORS.green, values: monthly.map((e) => e.revenue) }, { label: "Expenses", color: COLORS.gold, values: monthly.map((e) => e.expenses) }], format: compact }) : empty("No revenue yet")}</section>
+    <section class="panel chart-panel"><div class="panel-heading"><div><h2>Bookings by channel</h2><p>Active reservations</p></div></div>
+      ${slices.length ? donutChart({ slices, centerLabel: "bookings" }) : empty("No bookings yet")}</section>
+    <section class="panel chart-panel wide"><div class="panel-heading"><div><h2>Occupancy outlook</h2><p>Share of properties booked, next 30 days</p></div></div>
+      ${data.properties.length ? lineChart({ labels: trendLabels, values: trend }) : empty("No properties yet")}</section>
+    <section class="panel chart-panel"><div class="panel-heading"><div><h2>Top earners</h2><p>Revenue this month</p></div></div>
+      ${ranked.some((row) => row.value > 0) ? rankBars({ rows: ranked }) : empty("No revenue this month")}</section>
+  </div>`;
+}
+
 function renderOverview() {
   const today = localDate(new Date());
   const upcoming = data.reservations
@@ -448,6 +504,7 @@ function renderOverview() {
       ${statCard("Expected revenue", money(expectedRevenue), "From upcoming confirmed stays", "$")}
       ${statCard("Arrivals this week", nextSevenDays, "Guests checking in soon", "↗")}
     </div>
+    ${chartsHtml(today)}
     <div class="dashboard-grid">
       <section class="panel">
         <div class="panel-heading"><div><h2>Upcoming reservations</h2><p>Your next guest arrivals</p></div><button class="text-button" data-navigate="reservations">View all →</button></div>
@@ -1718,7 +1775,7 @@ authForm.addEventListener("submit", async (event) => {
   }
 });
 
-document.querySelector("#logout-button").addEventListener("click", async () => {
+async function signOut() {
   if (!supabase) return;
   try {
     const { error } = await supabase.auth.signOut();
@@ -1726,6 +1783,42 @@ document.querySelector("#logout-button").addEventListener("click", async () => {
   } catch (error) {
     console.error("Could not sign out.", error);
     showToast(error.message || "Could not sign out.");
+  }
+}
+
+document.querySelector("#logout-button").addEventListener("click", signOut);
+
+const userTrigger = document.querySelector("#user-trigger");
+const userDropdown = document.querySelector("#user-dropdown");
+
+function setUserMenu(open) {
+  userDropdown.hidden = !open;
+  userTrigger.setAttribute("aria-expanded", String(open));
+  if (open) userDropdown.querySelector("button")?.focus();
+}
+
+userTrigger.addEventListener("click", () => setUserMenu(userDropdown.hidden));
+document.addEventListener("click", (event) => {
+  if (!userDropdown.hidden && !event.target.closest("#user-menu")) setUserMenu(false);
+});
+document.addEventListener("keydown", (event) => {
+  if (event.key === "Escape" && !userDropdown.hidden) { setUserMenu(false); userTrigger.focus(); }
+});
+userDropdown.addEventListener("click", async (event) => {
+  const item = event.target.closest("button");
+  if (!item) return;
+  setUserMenu(false);
+  if (item.dataset.menuNav) navTo(item.dataset.menuNav);
+  else if (item.id === "menu-signout") await signOut();
+  else if (item.id === "menu-edit-name") {
+    const next = window.prompt("Display name", displayName());
+    if (next === null || !next.trim() || !supabase) return;
+    const { data: result, error } = await supabase.auth.updateUser({ data: { full_name: next.trim() } });
+    if (error) { showToast(error.message || "Could not update name."); return; }
+    currentUser = result.user || currentUser;
+    paintUser();
+    document.querySelector("#page-title").innerHTML = `${greeting()}, ${escapeHtml(displayName())} <span class="wave">✦</span>`;
+    showToast("Display name updated.");
   }
 });
 
