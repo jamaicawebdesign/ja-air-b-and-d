@@ -43,30 +43,38 @@ alter table public.reservations enable row level security;
 revoke all on public.properties, public.reservations from anon;
 grant select, insert, update, delete on public.properties, public.reservations to authenticated;
 
+drop policy if exists "Owners can read their properties" on public.properties;
 create policy "Owners can read their properties"
   on public.properties for select to authenticated
   using ((select auth.uid()) = user_id);
+drop policy if exists "Owners can add their properties" on public.properties;
 create policy "Owners can add their properties"
   on public.properties for insert to authenticated
   with check ((select auth.uid()) = user_id);
+drop policy if exists "Owners can update their properties" on public.properties;
 create policy "Owners can update their properties"
   on public.properties for update to authenticated
   using ((select auth.uid()) = user_id)
   with check ((select auth.uid()) = user_id);
+drop policy if exists "Owners can delete their properties" on public.properties;
 create policy "Owners can delete their properties"
   on public.properties for delete to authenticated
   using ((select auth.uid()) = user_id);
 
+drop policy if exists "Owners can read their reservations" on public.reservations;
 create policy "Owners can read their reservations"
   on public.reservations for select to authenticated
   using ((select auth.uid()) = user_id);
+drop policy if exists "Owners can add their reservations" on public.reservations;
 create policy "Owners can add their reservations"
   on public.reservations for insert to authenticated
   with check ((select auth.uid()) = user_id);
+drop policy if exists "Owners can update their reservations" on public.reservations;
 create policy "Owners can update their reservations"
   on public.reservations for update to authenticated
   using ((select auth.uid()) = user_id)
   with check ((select auth.uid()) = user_id);
+drop policy if exists "Owners can delete their reservations" on public.reservations;
 create policy "Owners can delete their reservations"
   on public.reservations for delete to authenticated
   using ((select auth.uid()) = user_id);
@@ -107,16 +115,20 @@ alter table public.channels enable row level security;
 revoke all on public.channels from anon;
 grant select, insert, update, delete on public.channels to authenticated;
 
+drop policy if exists "Owners can read their channels" on public.channels;
 create policy "Owners can read their channels"
   on public.channels for select to authenticated
   using ((select auth.uid()) = user_id);
+drop policy if exists "Owners can add their channels" on public.channels;
 create policy "Owners can add their channels"
   on public.channels for insert to authenticated
   with check ((select auth.uid()) = user_id);
+drop policy if exists "Owners can update their channels" on public.channels;
 create policy "Owners can update their channels"
   on public.channels for update to authenticated
   using ((select auth.uid()) = user_id)
   with check ((select auth.uid()) = user_id);
+drop policy if exists "Owners can delete their channels" on public.channels;
 create policy "Owners can delete their channels"
   on public.channels for delete to authenticated
   using ((select auth.uid()) = user_id);
@@ -191,9 +203,13 @@ do $$
 declare t text;
 begin
   foreach t in array array['conversations', 'messages', 'message_templates'] loop
+    execute format('drop policy if exists "Owners can read their %1$s" on public.%1$s', t);
     execute format('create policy "Owners can read their %1$s" on public.%1$s for select to authenticated using ((select auth.uid()) = user_id)', t);
+    execute format('drop policy if exists "Owners can add their %1$s" on public.%1$s', t);
     execute format('create policy "Owners can add their %1$s" on public.%1$s for insert to authenticated with check ((select auth.uid()) = user_id)', t);
+    execute format('drop policy if exists "Owners can update their %1$s" on public.%1$s', t);
     execute format('create policy "Owners can update their %1$s" on public.%1$s for update to authenticated using ((select auth.uid()) = user_id) with check ((select auth.uid()) = user_id)', t);
+    execute format('drop policy if exists "Owners can delete their %1$s" on public.%1$s', t);
     execute format('create policy "Owners can delete their %1$s" on public.%1$s for delete to authenticated using ((select auth.uid()) = user_id)', t);
   end loop;
 end $$;
@@ -244,19 +260,26 @@ do $$
 declare t text;
 begin
   foreach t in array array['staff', 'tasks'] loop
+    execute format('drop policy if exists "Owners can read their %1$s" on public.%1$s', t);
     execute format('create policy "Owners can read their %1$s" on public.%1$s for select to authenticated using ((select auth.uid()) = user_id)', t);
+    execute format('drop policy if exists "Owners can add their %1$s" on public.%1$s', t);
     execute format('create policy "Owners can add their %1$s" on public.%1$s for insert to authenticated with check ((select auth.uid()) = user_id)', t);
+    execute format('drop policy if exists "Owners can update their %1$s" on public.%1$s', t);
     execute format('create policy "Owners can update their %1$s" on public.%1$s for update to authenticated using ((select auth.uid()) = user_id) with check ((select auth.uid()) = user_id)', t);
+    execute format('drop policy if exists "Owners can delete their %1$s" on public.%1$s', t);
     execute format('create policy "Owners can delete their %1$s" on public.%1$s for delete to authenticated using ((select auth.uid()) = user_id)', t);
   end loop;
 end $$;
 
 -- Private storage for task photo proof; each owner can only touch their own folder
 insert into storage.buckets (id, name, public) values ('task-photos', 'task-photos', false) on conflict (id) do nothing;
+drop policy if exists "Owners read task photos" on storage.objects;
 create policy "Owners read task photos" on storage.objects for select to authenticated
   using (bucket_id = 'task-photos' and (storage.foldername(name))[1] = (select auth.uid())::text);
+drop policy if exists "Owners upload task photos" on storage.objects;
 create policy "Owners upload task photos" on storage.objects for insert to authenticated
   with check (bucket_id = 'task-photos' and (storage.foldername(name))[1] = (select auth.uid())::text);
+drop policy if exists "Owners delete task photos" on storage.objects;
 create policy "Owners delete task photos" on storage.objects for delete to authenticated
   using (bucket_id = 'task-photos' and (storage.foldername(name))[1] = (select auth.uid())::text);
 
@@ -299,9 +322,13 @@ do $$
 declare t text;
 begin
   foreach t in array array['owners', 'expenses'] loop
+    execute format('drop policy if exists "Owners can read their %1$s" on public.%1$s', t);
     execute format('create policy "Owners can read their %1$s" on public.%1$s for select to authenticated using ((select auth.uid()) = user_id)', t);
+    execute format('drop policy if exists "Owners can add their %1$s" on public.%1$s', t);
     execute format('create policy "Owners can add their %1$s" on public.%1$s for insert to authenticated with check ((select auth.uid()) = user_id)', t);
+    execute format('drop policy if exists "Owners can update their %1$s" on public.%1$s', t);
     execute format('create policy "Owners can update their %1$s" on public.%1$s for update to authenticated using ((select auth.uid()) = user_id) with check ((select auth.uid()) = user_id)', t);
+    execute format('drop policy if exists "Owners can delete their %1$s" on public.%1$s', t);
     execute format('create policy "Owners can delete their %1$s" on public.%1$s for delete to authenticated using ((select auth.uid()) = user_id)', t);
   end loop;
 end $$;
@@ -324,9 +351,13 @@ create table if not exists public.booking_sites (
 alter table public.booking_sites enable row level security;
 revoke all on public.booking_sites from anon;
 grant select, insert, update, delete on public.booking_sites to authenticated;
+drop policy if exists "Owners can read their booking site" on public.booking_sites;
 create policy "Owners can read their booking site" on public.booking_sites for select to authenticated using ((select auth.uid()) = user_id);
+drop policy if exists "Owners can add their booking site" on public.booking_sites;
 create policy "Owners can add their booking site" on public.booking_sites for insert to authenticated with check ((select auth.uid()) = user_id);
+drop policy if exists "Owners can update their booking site" on public.booking_sites;
 create policy "Owners can update their booking site" on public.booking_sites for update to authenticated using ((select auth.uid()) = user_id) with check ((select auth.uid()) = user_id);
+drop policy if exists "Owners can delete their booking site" on public.booking_sites;
 create policy "Owners can delete their booking site" on public.booking_sites for delete to authenticated using ((select auth.uid()) = user_id);
 
 -- Public site content: only enabled sites and only listed properties
@@ -426,7 +457,9 @@ alter table public.properties add column if not exists amenities text[] not null
 
 -- Public bucket so guests can see listing photos; owners can only write inside their own folder
 insert into storage.buckets (id, name, public) values ('property-photos', 'property-photos', true) on conflict (id) do nothing;
+drop policy if exists "Owners upload property photos" on storage.objects;
 create policy "Owners upload property photos" on storage.objects for insert to authenticated
   with check (bucket_id = 'property-photos' and (storage.foldername(name))[1] = (select auth.uid())::text);
+drop policy if exists "Owners delete property photos" on storage.objects;
 create policy "Owners delete property photos" on storage.objects for delete to authenticated
   using (bucket_id = 'property-photos' and (storage.foldername(name))[1] = (select auth.uid())::text);
