@@ -105,3 +105,6 @@ Open the avatar menu → **My profile** (photo, name, business, phone, location,
 
 ## Landing page demo
 The landing page (`index.html`) embeds a live sample booking site (`/book.html?demo=1`, sample data in `demo-data.js`, no backend calls), dashboard screenshots in `public/screenshots/`, a feature list, and WhatsApp links (`wa.me/18765497399`) including a "Request a demo" button.
+
+## Subscriptions
+Run `supabase/steps/8-subscriptions.sql`. Each signup gets a `pending` row in `subscriptions`; the customer's chosen plan is saved via `choose_plan()`. After a bank transfer, open Table Editor > `subscriptions` and set `status` = `active` and `paid_until`. Property limits per plan are enforced by a database trigger, and the app shows a plan card in Settings plus renewal banners.

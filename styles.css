@@ -738,3 +738,11 @@ td { border-color: #dfe7e2; font-size: 13px; color: #1d2a23; }
 @media (max-width: 560px) { .settings-form { grid-template-columns: 1fr; } }
 .heading-actions[hidden] { display: none; }
 .photo-pick { display: inline-flex; align-items: center; justify-content: center; }
+
+.plan-banner { border: 1px solid #000; border-radius: 12px; padding: 12px 16px; margin-bottom: 16px; color: #000; background: #fff6c2; }
+.plan-banner.bad { background: #fde2e0; }
+.plan-banner a { color: #000; font-weight: 700; }
+.plan-pill { display: inline-block; padding: 3px 10px; border-radius: 999px; font-weight: 700; font-size: 12px; background: #fff6c2; color: #000; border: 1px solid #000; }
+.plan-pill.active { background: #d9f2e3; }
+.plan-pill.expired { background: #fde2e0; }
+.plan-usage { color: #000; }

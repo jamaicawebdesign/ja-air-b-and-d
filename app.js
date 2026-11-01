@@ -2,6 +2,7 @@
 
 import { createClient } from "@supabase/supabase-js";
 import { SUPABASE_KEY, SUPABASE_URL } from "./supabase-config.js";
+import { PLANS, subscriptionState } from "./plans.js";
 import { PLATFORMS, findConflicts, parseIcal } from "./ical.js";
 import { COLORS, barChart, donutChart, lineChart, rankBars } from "./charts.js";
 import { CATEGORIES, monthRange, ownerPayout, propertyStats, statementHtml, sumStats } from "./reports.js";
@@ -40,6 +41,7 @@ function localDate(date) {
   return `${year}-${month}-${day}`;
 }
 
+let subscription = null;
 let data = { properties: [], reservations: [], channels: [], conversations: [], messages: [], templates: [], staff: [], tasks: [], owners: [], expenses: [], site: null };
 let reportMonth = "";
 let reportOwner = "all";
@@ -124,6 +126,10 @@ function mapExpense(row) {
   return { id: row.id, propertyId: row.property_id, category: row.category, description: row.description || "", amount: Number(row.amount), date: row.expense_date };
 }
 
+function mapSubscription(row) {
+  return row ? { plan: row.plan, status: row.status, trialEnds: row.trial_ends, paidUntil: row.paid_until } : null;
+}
+
 function mapSite(row) {
   return row ? { id: row.id, slug: row.slug, brandName: row.brand_name, tagline: row.tagline || "", email: row.contact_email || "", phone: row.contact_phone || "", enabled: row.enabled } : null;
 }
@@ -139,6 +145,26 @@ function mapChannel(row) {
     lastSyncedAt: row.last_synced_at,
     lastStatus: row.last_status || "never synced"
   };
+}
+
+async function loadSubscription() {
+  const pending = localStorage.getItem("havenstay_plan");
+  if (pending) {
+    const { error } = await supabase.rpc("choose_plan", { p_plan: pending });
+    if (!error) localStorage.removeItem("havenstay_plan");
+  }
+  const { data: row, error } = await supabase.from("subscriptions").select("*").maybeSingle();
+  subscription = error ? null : mapSubscription(row);
+}
+
+function subscriptionBanner() {
+  const state = subscriptionState(subscription);
+  if (state.status === "unknown") return "";
+  const plan = PLANS[subscription.plan];
+  if (state.status === "expired") return `<div class="plan-banner bad"><b>Your subscription has expired.</b> Renew your ${plan.name} plan by bank transfer to add new properties. <a href="/thank-you.html?email=${encodeURIComponent(currentUser?.email || "")}">Payment details</a></div>`;
+  if (state.status === "pending") return `<div class="plan-banner warn"><b>Verify your account.</b> Pay for your ${plan.name} plan by bank transfer and send proof on WhatsApp. <a href="/thank-you.html?email=${encodeURIComponent(currentUser?.email || "")}">Payment details</a></div>`;
+  if (state.daysLeft !== null && state.daysLeft <= 7) return `<div class="plan-banner warn"><b>Your ${plan.name} plan ${state.status === "trial" ? "trial ends" : "renews"} in ${Math.max(state.daysLeft, 0)} day${state.daysLeft === 1 ? "" : "s"}.</b> <a href="/thank-you.html?email=${encodeURIComponent(currentUser?.email || "")}">Payment details</a></div>`;
+  return "";
 }
 
 async function loadData() {
@@ -168,6 +194,7 @@ async function loadData() {
   const channelsMissing = Boolean(channelsResult.error);
   if (channelsMissing) console.warn("Channels unavailable. Run the channel section of supabase/schema.sql.", channelsResult.error);
   if (!requestedUserId || currentUser?.id !== requestedUserId) return;
+  await loadSubscription();
   data = {
     properties: propertiesResult.data.map(mapProperty),
     reservations: reservationsResult.data.map(mapReservation),
@@ -431,6 +458,8 @@ function render() {
   if (currentView === "website") renderWebsite();
   if (currentView === "profile") renderProfile();
   if (currentView === "settings") renderSettings();
+  const banner = subscriptionBanner();
+  if (banner) viewRoot.insertAdjacentHTML("afterbegin", banner);
   updateConflictBadge();
 }
 
@@ -600,10 +629,25 @@ function renderProfile() {
     </div>`;
 }
 
+function planCard() {
+  if (!subscription) return "";
+  const plan = PLANS[subscription.plan];
+  const state = subscriptionState(subscription);
+  const labels = { pending: "Awaiting payment", trial: "Trial", active: "Active", expired: "Expired" };
+  const until = state.end ? ` · ${state.status === "active" ? "paid until" : "trial ends"} ${escapeHtml(state.end)}` : "";
+  return `<section class="panel plan-panel">
+    <div class="panel-heading"><div><h2>Your plan</h2><p>${plan.name} · US$${plan.price}/month · up to ${plan.limit} properties</p></div></div>
+    <p><span class="plan-pill ${state.status}">${labels[state.status] || state.status}</span>${until}</p>
+    <p class="plan-usage">${data.properties.length} of ${plan.limit} properties used</p>
+    <div class="settings-actions"><a class="button button-secondary" href="/thank-you.html?email=${encodeURIComponent(currentUser?.email || "")}">Payment details</a></div>
+  </section>`;
+}
+
 function renderSettings() {
   const info = meta();
   viewRoot.innerHTML = `
     <div class="settings-grid">
+      ${planCard()}
       <section class="panel">
         <div class="panel-heading"><div><h2>Preferences</h2><p>Saved to your account, so they follow you across devices.</p></div></div>
         <form id="prefs-form" class="settings-form" novalidate>
