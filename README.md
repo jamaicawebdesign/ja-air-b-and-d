@@ -90,3 +90,11 @@ The **Website** page launches a branded booking site so guests can book you dire
 4. Confirm or decline requests on the Website page. Confirming blocks the dates everywhere.
 
 Public access is limited to three database functions (`site_info`, `site_busy`, `site_book`); guest details and other tables are never exposed. Online card payments aren't included: you arrange payment with the guest directly. The savings figure assumes a typical 15% OTA fee.
+
+## Dashboard charts and account menu
+
+The Overview shows dependency-free SVG charts (`charts.js`): revenue vs expenses (6 months), bookings by channel, a 30-day occupancy outlook and top earners. The top-right avatar opens an account menu with shortcuts, display-name editing and sign out.
+
+### Listing photos & amenities
+
+Edit a property to upload up to 6 photos (first is the cover) and add amenities. They show on the direct booking site as a card cover, a gallery and amenity chips. Run the "Listing photos & amenities" block at the end of `supabase/schema.sql` and re-run the `site_info` function so it returns them.

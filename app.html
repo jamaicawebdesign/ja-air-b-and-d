@@ -92,7 +92,20 @@
               </select>
             </label>
             <button class="icon-button notification-button" aria-label="Notifications">♧<span></span></button>
-            <span class="avatar top-avatar">JL</span>
+            <div class="user-menu" id="user-menu">
+              <button class="user-trigger" id="user-trigger" type="button" aria-haspopup="menu" aria-expanded="false" aria-controls="user-dropdown" aria-label="Account menu">
+                <span class="avatar top-avatar">JL</span><span class="user-trigger-name" id="menu-trigger-name">Landlord</span><span class="caret" aria-hidden="true">▾</span>
+              </button>
+              <div class="user-dropdown" id="user-dropdown" role="menu" hidden>
+                <div class="user-dropdown-head"><span class="avatar big-avatar">JL</span><div><strong id="menu-name">Landlord</strong><small id="menu-email"></small></div></div>
+                <button role="menuitem" type="button" data-menu-nav="overview">⌂ Dashboard</button>
+                <button role="menuitem" type="button" data-menu-nav="reports">$ Reports &amp; statements</button>
+                <button role="menuitem" type="button" data-menu-nav="website">◎ Booking website</button>
+                <button role="menuitem" type="button" id="menu-edit-name">✎ Edit display name</button>
+                <hr>
+                <button role="menuitem" type="button" class="menu-signout" id="menu-signout">⎋ Sign out</button>
+              </div>
+            </div>
           </div>
         </header>
 

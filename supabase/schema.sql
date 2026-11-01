@@ -343,7 +343,8 @@ as $$
     'contact_phone', s.contact_phone,
     'properties', coalesce((
       select json_agg(json_build_object('id', p.id, 'name', p.name, 'location', p.location,
-        'bedrooms', p.bedrooms, 'rate', p.rate, 'description', p.description) order by p.created_at)
+        'bedrooms', p.bedrooms, 'rate', p.rate, 'description', p.description,
+        'photos', to_json(p.photos), 'amenities', to_json(p.amenities)) order by p.created_at)
       from public.properties p where p.user_id = s.user_id and p.listed), '[]'::json))
   from public.booking_sites s
   where s.slug = lower(p_slug) and s.enabled;
@@ -417,3 +418,15 @@ revoke all on function public.site_info(text), public.site_busy(text, uuid),
   public.site_book(text, uuid, text, text, text, date, date, integer, text) from public;
 grant execute on function public.site_info(text), public.site_busy(text, uuid),
   public.site_book(text, uuid, text, text, text, date, date, integer, text) to anon, authenticated;
+
+-- Listing photos & amenities for the direct booking site (run this block after the sections above,
+-- then re-run the site_info function above so it returns photos and amenities)
+alter table public.properties add column if not exists photos text[] not null default '{}';
+alter table public.properties add column if not exists amenities text[] not null default '{}';
+
+-- Public bucket so guests can see listing photos; owners can only write inside their own folder
+insert into storage.buckets (id, name, public) values ('property-photos', 'property-photos', true) on conflict (id) do nothing;
+create policy "Owners upload property photos" on storage.objects for insert to authenticated
+  with check (bucket_id = 'property-photos' and (storage.foldername(name))[1] = (select auth.uid())::text);
+create policy "Owners delete property photos" on storage.objects for delete to authenticated
+  using (bucket_id = 'property-photos' and (storage.foldername(name))[1] = (select auth.uid())::text);

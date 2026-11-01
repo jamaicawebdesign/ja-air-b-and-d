@@ -3,6 +3,7 @@
 import { createClient } from "@supabase/supabase-js";
 import { SUPABASE_KEY, SUPABASE_URL } from "./supabase-config.js";
 import { PLATFORMS, findConflicts, parseIcal } from "./ical.js";
+import { COLORS, barChart, donutChart, lineChart, rankBars } from "./charts.js";
 import { CATEGORIES, monthRange, ownerPayout, propertyStats, statementHtml, sumStats } from "./reports.js";
 import { KINDS, ROLES, STATUSES, isOverdue, notifyLink, pickCleaner, smsLink, turnoversToCreate } from "./ops.js";
 import { CHANNELS, STARTER_TEMPLATES, TRIGGERS, deliveryLink, dueMessages, fillTemplate, matchAutoReply } from "./inbox.js";
@@ -57,7 +58,9 @@ function mapProperty(row) {
     rate: Number(row.rate),
     description: row.description || "",
     ownerId: row.owner_id || null,
-    listed: Boolean(row.listed)
+    listed: Boolean(row.listed),
+    photos: Array.isArray(row.photos) ? row.photos : [],
+    amenities: Array.isArray(row.amenities) ? row.amenities : []
   };
 }
 
@@ -198,6 +201,15 @@ function showApp() {
   appShell.hidden = false;
 }
 
+function paintUser() {
+  const name = displayName();
+  document.querySelector("#profile-name").textContent = name;
+  document.querySelector("#menu-name").textContent = name;
+  document.querySelector("#menu-trigger-name").textContent = name;
+  document.querySelector("#menu-email").textContent = currentUser?.email || "";
+  document.querySelectorAll(".avatar").forEach((avatar) => { avatar.textContent = initials(name); });
+}
+
 async function handleSession(session) {
   const nextUser = session?.user || null;
   if (!nextUser) {
@@ -212,8 +224,7 @@ async function handleSession(session) {
   loadingUserId = nextUser.id;
   showApp();
   const name = displayName();
-  document.querySelector("#profile-name").textContent = name;
-  document.querySelectorAll(".avatar").forEach((avatar) => { avatar.textContent = initials(name); });
+  paintUser();
   document.querySelector("#page-title").innerHTML = `${greeting()}, ${escapeHtml(name)} <span class="wave">✦</span>`;
   viewRoot.innerHTML = `<section class="panel"><div class="empty-state">Loading your workspace…</div></section>`;
   try {
@@ -427,6 +438,53 @@ function reservationRows(reservations) {
   }).join("");
 }
 
+function chartsHtml(today) {
+  const compact = (value) => new Intl.NumberFormat(undefined, { style: "currency", currency: currencyCode(), notation: "compact", maximumFractionDigits: 1 }).format(Number(value) || 0);
+  const base = today.slice(0, 7);
+  const months = [];
+  for (let i = 5; i >= 0; i -= 1) {
+    const [y, m] = base.split("-").map(Number);
+    const d = new Date(Date.UTC(y, m - 1 - i, 1));
+    months.push(`${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, "0")}`);
+  }
+  const monthly = months.map((ym) => {
+    const { start, end } = monthRange(ym);
+    return sumStats(data.properties.map((property) => propertyStats({ property, reservations: data.reservations, expenses: data.expenses, start, end })));
+  });
+  const monthLabels = months.map((ym) => new Date(`${ym}-01T00:00:00Z`).toLocaleDateString(undefined, { month: "short", timeZone: "UTC" }));
+  const hasMoney = monthly.some((entry) => entry.revenue > 0 || entry.expenses > 0);
+
+  const days = Array.from({ length: 30 }, (_, i) => localDate(new Date(parseDate(today).getTime() + i * 86400000)));
+  const active = data.reservations.filter((reservation) => reservation.status !== "cancelled");
+  const trend = days.map((day) => {
+    if (!data.properties.length) return 0;
+    const busy = new Set(active.filter((reservation) => reservation.checkIn <= day && reservation.checkOut > day).map((reservation) => reservation.propertyId));
+    return (busy.size / data.properties.length) * 100;
+  });
+  const trendLabels = days.map((day) => formatDate(day, { month: "short", day: "numeric" }));
+
+  const sourceColors = { direct: COLORS.green, airbnb: COLORS.pink, vrbo: COLORS.blue, booking: COLORS.navy, other: COLORS.gold };
+  const counts = {};
+  active.forEach((reservation) => { const key = reservation.source || "direct"; counts[key] = (counts[key] || 0) + 1; });
+  const slices = Object.entries(counts).map(([key, value]) => ({ label: PLATFORMS[key] || key.charAt(0).toUpperCase() + key.slice(1), value, color: sourceColors[key] || COLORS.purple }));
+
+  const { start, end } = monthRange(base);
+  const ranked = data.properties.map((property) => ({ label: property.name, value: propertyStats({ property, reservations: data.reservations, expenses: data.expenses, start, end }).revenue }))
+    .sort((a, b) => b.value - a.value).slice(0, 5).map((row) => ({ ...row, display: money(row.value) }));
+
+  const empty = (text) => `<div class="empty-state"><strong>${text}</strong><p>Add reservations to see this chart.</p></div>`;
+  return `<div class="charts-grid">
+    <section class="panel chart-panel wide"><div class="panel-heading"><div><h2>Revenue vs expenses</h2><p>Last 6 months</p></div></div>
+      ${hasMoney ? barChart({ labels: monthLabels, series: [{ label: "Revenue", color: COLORS.green, values: monthly.map((e) => e.revenue) }, { label: "Expenses", color: COLORS.gold, values: monthly.map((e) => e.expenses) }], format: compact }) : empty("No revenue yet")}</section>
+    <section class="panel chart-panel"><div class="panel-heading"><div><h2>Bookings by channel</h2><p>Active reservations</p></div></div>
+      ${slices.length ? donutChart({ slices, centerLabel: "bookings" }) : empty("No bookings yet")}</section>
+    <section class="panel chart-panel wide"><div class="panel-heading"><div><h2>Occupancy outlook</h2><p>Share of properties booked, next 30 days</p></div></div>
+      ${data.properties.length ? lineChart({ labels: trendLabels, values: trend }) : empty("No properties yet")}</section>
+    <section class="panel chart-panel"><div class="panel-heading"><div><h2>Top earners</h2><p>Revenue this month</p></div></div>
+      ${ranked.some((row) => row.value > 0) ? rankBars({ rows: ranked }) : empty("No revenue this month")}</section>
+  </div>`;
+}
+
 function renderOverview() {
   const today = localDate(new Date());
   const upcoming = data.reservations
@@ -448,6 +506,7 @@ function renderOverview() {
       ${statCard("Expected revenue", money(expectedRevenue), "From upcoming confirmed stays", "$")}
       ${statCard("Arrivals this week", nextSevenDays, "Guests checking in soon", "↗")}
     </div>
+    ${chartsHtml(today)}
     <div class="dashboard-grid">
       <section class="panel">
         <div class="panel-heading"><div><h2>Upcoming reservations</h2><p>Your next guest arrivals</p></div><button class="text-button" data-navigate="reservations">View all →</button></div>
@@ -1146,7 +1205,7 @@ function renderProperties() {
       const today = localDate(new Date());
       const bookings = data.reservations.filter((reservation) => reservation.propertyId === property.id && reservation.status !== "cancelled" && reservation.checkOut >= today).length;
       return `<article class="property-card">
-        <div class="property-art art-${index % 3}"><span class="property-art-label">${Number(property.bedrooms) || 1} ${Number(property.bedrooms) === 1 ? "bedroom" : "bedrooms"}</span></div>
+        <div class="property-art art-${index % 3}"${property.photos[0] ? ` style="background-image:url('${escapeHtml(property.photos[0])}')"` : ""}><span class="property-art-label">${Number(property.bedrooms) || 1} ${Number(property.bedrooms) === 1 ? "bedroom" : "bedrooms"}</span></div>
         <div class="property-content">
           <div class="property-title-row"><h3>${escapeHtml(property.name)}</h3><span class="status status-confirmed">Active</span></div>
           <p class="property-location">${escapeHtml(property.location)}</p>
@@ -1175,6 +1234,29 @@ function field(name, label, type, value = "", options = {}) {
   return `<div class="field${full}"><label for="field-${name}">${label}</label><input ${common} type="${type}" value="${escapeHtml(value)}"></div>`;
 }
 
+const MAX_PHOTOS = 6;
+let editorPhotos = [];
+
+function renderPhotoManager() {
+  const box = document.querySelector("#photo-manager");
+  if (!box) return;
+  box.innerHTML = editorPhotos.map((url, index) => `<div class="photo-thumb"><img src="${escapeHtml(url)}" alt="Listing photo ${index + 1}"><button type="button" class="photo-remove" data-photo-index="${index}" aria-label="Remove photo ${index + 1}">×</button>${index === 0 ? '<span class="photo-cover">Cover</span>' : `<button type="button" class="photo-make-cover" data-cover-index="${index}">Make cover</button>`}</div>`).join("");
+}
+
+async function uploadListingPhotos(files) {
+  const urls = [];
+  for (const file of files) {
+    if (!file.type.startsWith("image/")) throw new Error("Photos must be image files.");
+    if (file.size > 8 * 1024 * 1024) throw new Error(`${file.name} is over 8 MB.`);
+    const extension = (file.name.split(".").pop() || "jpg").replace(/[^a-z0-9]/gi, "").slice(0, 5).toLowerCase() || "jpg";
+    const path = `${currentUser.id}/${crypto.randomUUID()}.${extension}`;
+    const { error } = await supabase.storage.from("property-photos").upload(path, file, { contentType: file.type });
+    if (error) throw error;
+    urls.push(supabase.storage.from("property-photos").getPublicUrl(path).data.publicUrl);
+  }
+  return urls;
+}
+
 function openEditor(type, item = null) {
   if ((type === "reservation" || type === "channel" || type === "task" || type === "expense") && !data.properties.length) {
     showToast(`Add a property before creating a ${type}.`);
@@ -1194,8 +1276,12 @@ function openEditor(type, item = null) {
       field("bedrooms", "Bedrooms", "number", item?.bedrooms ?? 1, { min: 1, step: 1 }),
       field("rate", "Nightly rate", "number", item?.rate ?? "", { min: 0, step: "0.01" }),
       field("ownerId", "Property owner (if you manage it for someone else)", "select", item?.ownerId || "", { full: true, required: false, choices: [["", "Me (my own property)"], ...data.owners.map((entry) => [entry.id, entry.name])] }),
-      field("description", "Description", "textarea", item?.description, { full: true, required: false, placeholder: "A few details about your place" })
+      field("description", "Description", "textarea", item?.description, { full: true, required: false, placeholder: "A few details about your place" }),
+      field("amenities", "Amenities (comma separated)", "text", (item?.amenities || []).join(", "), { full: true, required: false, placeholder: "WiFi, Pool, Air conditioning, Parking" }),
+      `<div class="field full"><label for="field-photoFiles">Photos (up to ${MAX_PHOTOS}, first one is the cover)</label><div id="photo-manager" class="photo-manager"></div><input id="field-photoFiles" name="photoFiles" type="file" accept="image/*" multiple></div>`
     ].join("");
+    editorPhotos = [...(item?.photos || [])];
+    renderPhotoManager();
   } else if (type === "owner") {
     formFields.innerHTML = [
       field("name", "Owner name", "text", item?.name, { full: true }),
@@ -1321,6 +1407,19 @@ async function saveEditor(event) {
   const saveButton = document.querySelector("#save-button");
   saveButton.disabled = true;
   try {
+    if (isProperty) {
+      const files = [...(document.querySelector("#field-photoFiles")?.files || [])];
+      if (editorPhotos.length + files.length > MAX_PHOTOS) throw new Error(`A listing can have at most ${MAX_PHOTOS} photos.`);
+      if (files.length) showToast("Uploading photos…");
+      const existing = data.properties.find((entry) => entry.id === editor.id);
+      const photos = [...editorPhotos, ...await uploadListingPhotos(files)];
+      const amenities = (values.amenities || "").split(",").map((entry) => entry.trim()).filter(Boolean).slice(0, 20);
+      // Skip the new columns when unused so saving still works before the SQL block is run
+      if (photos.length || amenities.length || existing?.photos.length || existing?.amenities.length) {
+        payload.photos = photos;
+        payload.amenities = amenities;
+      }
+    }
     const request = editor.id
       ? supabase.from(table).update(payload).eq("id", editor.id)
       : supabase.from(table).insert({ ...payload, user_id: currentUser.id });
@@ -1718,7 +1817,7 @@ authForm.addEventListener("submit", async (event) => {
   }
 });
 
-document.querySelector("#logout-button").addEventListener("click", async () => {
+async function signOut() {
   if (!supabase) return;
   try {
     const { error } = await supabase.auth.signOut();
@@ -1726,6 +1825,51 @@ document.querySelector("#logout-button").addEventListener("click", async () => {
   } catch (error) {
     console.error("Could not sign out.", error);
     showToast(error.message || "Could not sign out.");
+  }
+}
+
+document.querySelector("#logout-button").addEventListener("click", signOut);
+
+formFields.addEventListener("click", (event) => {
+  const remove = event.target.closest("[data-photo-index]");
+  const cover = event.target.closest("[data-cover-index]");
+  if (remove) editorPhotos.splice(Number(remove.dataset.photoIndex), 1);
+  else if (cover) editorPhotos.unshift(...editorPhotos.splice(Number(cover.dataset.coverIndex), 1));
+  else return;
+  renderPhotoManager();
+});
+
+const userTrigger = document.querySelector("#user-trigger");
+const userDropdown = document.querySelector("#user-dropdown");
+
+function setUserMenu(open) {
+  userDropdown.hidden = !open;
+  userTrigger.setAttribute("aria-expanded", String(open));
+  if (open) userDropdown.querySelector("button")?.focus();
+}
+
+userTrigger.addEventListener("click", () => setUserMenu(userDropdown.hidden));
+document.addEventListener("click", (event) => {
+  if (!userDropdown.hidden && !event.target.closest("#user-menu")) setUserMenu(false);
+});
+document.addEventListener("keydown", (event) => {
+  if (event.key === "Escape" && !userDropdown.hidden) { setUserMenu(false); userTrigger.focus(); }
+});
+userDropdown.addEventListener("click", async (event) => {
+  const item = event.target.closest("button");
+  if (!item) return;
+  setUserMenu(false);
+  if (item.dataset.menuNav) navTo(item.dataset.menuNav);
+  else if (item.id === "menu-signout") await signOut();
+  else if (item.id === "menu-edit-name") {
+    const next = window.prompt("Display name", displayName());
+    if (next === null || !next.trim() || !supabase) return;
+    const { data: result, error } = await supabase.auth.updateUser({ data: { full_name: next.trim() } });
+    if (error) { showToast(error.message || "Could not update name."); return; }
+    currentUser = result.user || currentUser;
+    paintUser();
+    document.querySelector("#page-title").innerHTML = `${greeting()}, ${escapeHtml(displayName())} <span class="wave">✦</span>`;
+    showToast("Display name updated.");
   }
 });
 
