@@ -113,3 +113,7 @@ label { display: grid; gap: 5px; font-size: 14px; font-weight: 700; }
 
 @media (max-width: 900px) { .search { grid-template-columns: 1fr 1fr; } .search .btn { grid-column: 1 / -1; } .detail { grid-template-columns: 1fr; } .booking-card { position: static; } }
 @media (max-width: 640px) { .site-nav a:not(.nav-cta) { display: none; } .search { grid-template-columns: 1fr; } .row { grid-template-columns: 1fr; } .gallery img#gallery-main, .gallery .placeholder { height: 240px; } .hero { min-height: 480px; } }
+
+body.demo .site-header { top: 0; }
+body.demo .contact-actions .btn { pointer-events: none; }
+.demo-badge { background: var(--gold); color: #000; font-weight: 800; font-size: 12px; text-align: center; padding: 6px; letter-spacing: .5px; }
