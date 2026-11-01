@@ -704,3 +704,12 @@ td { border-color: #dfe7e2; font-size: 13px; color: #1d2a23; }
 .user-dropdown hr { border: 0; border-top: 1px solid #000; margin: 6px 0; opacity: .2; }
 .user-dropdown .menu-signout { color: #b3261e; }
 @media (max-width: 700px) { .user-trigger-name, .caret { display: none; } .user-trigger { padding: 3px; } }
+
+.property-art[style*="background-image"] { background-size: cover; background-position: center; }
+.property-art[style*="background-image"]::before, .property-art[style*="background-image"]::after { display: none; }
+.photo-manager { display: flex; flex-wrap: wrap; gap: 10px; margin-bottom: 8px; }
+.photo-thumb { position: relative; width: 96px; }
+.photo-thumb img { width: 96px; height: 72px; object-fit: cover; border-radius: 8px; border: 1.5px solid #000; display: block; }
+.photo-remove { position: absolute; top: 3px; right: 3px; width: 22px; height: 22px; border-radius: 50%; border: 0; background: #000; color: #fff; cursor: pointer; line-height: 1; }
+.photo-cover, .photo-make-cover { display: block; width: 100%; margin-top: 4px; font-size: 11px; font-weight: 700; text-align: center; color: #000; background: var(--gold); border: 0; border-radius: 6px; padding: 2px 0; }
+.photo-make-cover { background: #fff; border: 1px solid #000; cursor: pointer; }

@@ -24,6 +24,19 @@ function fail(message) {
   statusBox.classList.add("error");
 }
 
+function amenityChips(list, limit) {
+  if (!list?.length) return "";
+  const shown = list.slice(0, limit);
+  const extra = list.length - shown.length;
+  return `<ul class="chips">${shown.map((entry) => `<li>${escapeHtml(entry)}</li>`).join("")}${extra > 0 ? `<li class="more">+${extra} more</li>` : ""}</ul>`;
+}
+
+function galleryHtml(property) {
+  const photos = property.photos || [];
+  if (!photos.length) return "";
+  return `<div class="gallery"><img id="gallery-main" src="${escapeHtml(photos[0])}" alt="${escapeHtml(property.name)}">${photos.length > 1 ? `<div class="thumbs">${photos.map((url, index) => `<button type="button" class="thumb${index === 0 ? " on" : ""}" data-photo="${escapeHtml(url)}" aria-label="Show photo ${index + 1}"><img src="${escapeHtml(url)}" alt="" loading="lazy"></button>`).join("")}</div>` : ""}</div>`;
+}
+
 async function init() {
   const url = SUPABASE_URL;
   const key = SUPABASE_KEY;
@@ -43,13 +56,16 @@ async function init() {
   grid.hidden = false;
   grid.innerHTML = site.properties.map((property, index) => `
     <article class="card">
-      <div class="art art-${index % 3}"><span>${escapeHtml(property.name.slice(0, 1))}</span></div>
+      ${property.photos?.[0]
+        ? `<div class="art photo" style="background-image:url('${escapeHtml(property.photos[0])}')" role="img" aria-label="${escapeHtml(property.name)}">${property.photos.length > 1 ? `<span class="photo-count">${property.photos.length} photos</span>` : ""}</div>`
+        : `<div class="art art-${index % 3}"><span>${escapeHtml(property.name.slice(0, 1))}</span></div>`}
       <div class="card-body">
         <h2>${escapeHtml(property.name)}</h2>
         <p class="meta">${escapeHtml(property.location)} · ${Number(property.bedrooms)} ${Number(property.bedrooms) === 1 ? "bedroom" : "bedrooms"}</p>
         <p class="desc">${escapeHtml(property.description)}</p>
+        ${amenityChips(property.amenities, 4)}
         <div class="card-foot"><strong>${money(property.rate)}</strong><span> / night</span>
-          <button class="btn" data-book="${escapeHtml(property.id)}">Check availability</button></div>
+          <button class="btn" data-book="${escapeHtml(property.id)}">View &amp; book</button></div>
       </div>
     </article>`).join("");
 }
@@ -64,7 +80,11 @@ async function openBooking(id) {
   booking.hidden = false;
   booking.innerHTML = `
     <form id="book-form" class="form" novalidate>
-      <h2>Book ${escapeHtml(property.name)}</h2>
+      ${galleryHtml(property)}
+      <div><h2>${escapeHtml(property.name)}</h2>
+        <p class="meta">${escapeHtml(property.location)} · ${Number(property.bedrooms)} ${Number(property.bedrooms) === 1 ? "bedroom" : "bedrooms"} · ${money(property.rate)} / night</p></div>
+      ${property.description ? `<p class="desc">${escapeHtml(property.description)}</p>` : ""}
+      ${amenityChips(property.amenities, 30)}
       <div class="row">
         <label>Check-in<input type="date" name="checkIn" min="${iso(today)}" value="${iso(tomorrow)}" required></label>
         <label>Check-out<input type="date" name="checkOut" min="${iso(tomorrow)}" required></label>
@@ -85,6 +105,12 @@ async function openBooking(id) {
     </form>`;
   booking.scrollIntoView({ behavior: "smooth", block: "start" });
   const form = $("#book-form");
+  form.addEventListener("click", (event) => {
+    const thumb = event.target.closest("[data-photo]");
+    if (!thumb) return;
+    $("#gallery-main").src = thumb.dataset.photo;
+    form.querySelectorAll(".thumb").forEach((entry) => entry.classList.toggle("on", entry === thumb));
+  });
   const quote = $("#quote");
   const error = $("#form-error");
 

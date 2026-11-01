@@ -58,7 +58,9 @@ function mapProperty(row) {
     rate: Number(row.rate),
     description: row.description || "",
     ownerId: row.owner_id || null,
-    listed: Boolean(row.listed)
+    listed: Boolean(row.listed),
+    photos: Array.isArray(row.photos) ? row.photos : [],
+    amenities: Array.isArray(row.amenities) ? row.amenities : []
   };
 }
 
@@ -1203,7 +1205,7 @@ function renderProperties() {
       const today = localDate(new Date());
       const bookings = data.reservations.filter((reservation) => reservation.propertyId === property.id && reservation.status !== "cancelled" && reservation.checkOut >= today).length;
       return `<article class="property-card">
-        <div class="property-art art-${index % 3}"><span class="property-art-label">${Number(property.bedrooms) || 1} ${Number(property.bedrooms) === 1 ? "bedroom" : "bedrooms"}</span></div>
+        <div class="property-art art-${index % 3}"${property.photos[0] ? ` style="background-image:url('${escapeHtml(property.photos[0])}')"` : ""}><span class="property-art-label">${Number(property.bedrooms) || 1} ${Number(property.bedrooms) === 1 ? "bedroom" : "bedrooms"}</span></div>
         <div class="property-content">
           <div class="property-title-row"><h3>${escapeHtml(property.name)}</h3><span class="status status-confirmed">Active</span></div>
           <p class="property-location">${escapeHtml(property.location)}</p>
@@ -1232,6 +1234,29 @@ function field(name, label, type, value = "", options = {}) {
   return `<div class="field${full}"><label for="field-${name}">${label}</label><input ${common} type="${type}" value="${escapeHtml(value)}"></div>`;
 }
 
+const MAX_PHOTOS = 6;
+let editorPhotos = [];
+
+function renderPhotoManager() {
+  const box = document.querySelector("#photo-manager");
+  if (!box) return;
+  box.innerHTML = editorPhotos.map((url, index) => `<div class="photo-thumb"><img src="${escapeHtml(url)}" alt="Listing photo ${index + 1}"><button type="button" class="photo-remove" data-photo-index="${index}" aria-label="Remove photo ${index + 1}">×</button>${index === 0 ? '<span class="photo-cover">Cover</span>' : `<button type="button" class="photo-make-cover" data-cover-index="${index}">Make cover</button>`}</div>`).join("");
+}
+
+async function uploadListingPhotos(files) {
+  const urls = [];
+  for (const file of files) {
+    if (!file.type.startsWith("image/")) throw new Error("Photos must be image files.");
+    if (file.size > 8 * 1024 * 1024) throw new Error(`${file.name} is over 8 MB.`);
+    const extension = (file.name.split(".").pop() || "jpg").replace(/[^a-z0-9]/gi, "").slice(0, 5).toLowerCase() || "jpg";
+    const path = `${currentUser.id}/${crypto.randomUUID()}.${extension}`;
+    const { error } = await supabase.storage.from("property-photos").upload(path, file, { contentType: file.type });
+    if (error) throw error;
+    urls.push(supabase.storage.from("property-photos").getPublicUrl(path).data.publicUrl);
+  }
+  return urls;
+}
+
 function openEditor(type, item = null) {
   if ((type === "reservation" || type === "channel" || type === "task" || type === "expense") && !data.properties.length) {
     showToast(`Add a property before creating a ${type}.`);
@@ -1251,8 +1276,12 @@ function openEditor(type, item = null) {
       field("bedrooms", "Bedrooms", "number", item?.bedrooms ?? 1, { min: 1, step: 1 }),
       field("rate", "Nightly rate", "number", item?.rate ?? "", { min: 0, step: "0.01" }),
       field("ownerId", "Property owner (if you manage it for someone else)", "select", item?.ownerId || "", { full: true, required: false, choices: [["", "Me (my own property)"], ...data.owners.map((entry) => [entry.id, entry.name])] }),
-      field("description", "Description", "textarea", item?.description, { full: true, required: false, placeholder: "A few details about your place" })
+      field("description", "Description", "textarea", item?.description, { full: true, required: false, placeholder: "A few details about your place" }),
+      field("amenities", "Amenities (comma separated)", "text", (item?.amenities || []).join(", "), { full: true, required: false, placeholder: "WiFi, Pool, Air conditioning, Parking" }),
+      `<div class="field full"><label for="field-photoFiles">Photos (up to ${MAX_PHOTOS}, first one is the cover)</label><div id="photo-manager" class="photo-manager"></div><input id="field-photoFiles" name="photoFiles" type="file" accept="image/*" multiple></div>`
     ].join("");
+    editorPhotos = [...(item?.photos || [])];
+    renderPhotoManager();
   } else if (type === "owner") {
     formFields.innerHTML = [
       field("name", "Owner name", "text", item?.name, { full: true }),
@@ -1378,6 +1407,19 @@ async function saveEditor(event) {
   const saveButton = document.querySelector("#save-button");
   saveButton.disabled = true;
   try {
+    if (isProperty) {
+      const files = [...(document.querySelector("#field-photoFiles")?.files || [])];
+      if (editorPhotos.length + files.length > MAX_PHOTOS) throw new Error(`A listing can have at most ${MAX_PHOTOS} photos.`);
+      if (files.length) showToast("Uploading photos…");
+      const existing = data.properties.find((entry) => entry.id === editor.id);
+      const photos = [...editorPhotos, ...await uploadListingPhotos(files)];
+      const amenities = (values.amenities || "").split(",").map((entry) => entry.trim()).filter(Boolean).slice(0, 20);
+      // Skip the new columns when unused so saving still works before the SQL block is run
+      if (photos.length || amenities.length || existing?.photos.length || existing?.amenities.length) {
+        payload.photos = photos;
+        payload.amenities = amenities;
+      }
+    }
     const request = editor.id
       ? supabase.from(table).update(payload).eq("id", editor.id)
       : supabase.from(table).insert({ ...payload, user_id: currentUser.id });
@@ -1787,6 +1829,15 @@ async function signOut() {
 }
 
 document.querySelector("#logout-button").addEventListener("click", signOut);
+
+formFields.addEventListener("click", (event) => {
+  const remove = event.target.closest("[data-photo-index]");
+  const cover = event.target.closest("[data-cover-index]");
+  if (remove) editorPhotos.splice(Number(remove.dataset.photoIndex), 1);
+  else if (cover) editorPhotos.unshift(...editorPhotos.splice(Number(cover.dataset.coverIndex), 1));
+  else return;
+  renderPhotoManager();
+});
 
 const userTrigger = document.querySelector("#user-trigger");
 const userDropdown = document.querySelector("#user-dropdown");
