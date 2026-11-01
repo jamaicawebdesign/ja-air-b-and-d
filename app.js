@@ -207,7 +207,12 @@ function paintUser() {
   document.querySelector("#menu-name").textContent = name;
   document.querySelector("#menu-trigger-name").textContent = name;
   document.querySelector("#menu-email").textContent = currentUser?.email || "";
-  document.querySelectorAll(".avatar").forEach((avatar) => { avatar.textContent = initials(name); });
+  const photo = currentUser?.user_metadata?.avatar_url;
+  document.querySelectorAll(".avatar").forEach((avatar) => {
+    avatar.textContent = photo ? "" : initials(name);
+    avatar.style.backgroundImage = photo ? `url('${photo.replace(/'/g, "%27")}')` : "";
+    avatar.classList.toggle("has-photo", Boolean(photo));
+  });
 }
 
 async function handleSession(session) {
@@ -229,6 +234,13 @@ async function handleSession(session) {
   viewRoot.innerHTML = `<section class="panel"><div class="empty-state">Loading your workspace…</div></section>`;
   try {
     await loadData();
+    const prefs = currentUser?.user_metadata || {};
+    if (prefs.currency && prefs.currency !== currencyCode()) {
+      document.querySelector("#currency-select").value = prefs.currency;
+      localStorage.setItem(CURRENCY_KEY, prefs.currency);
+      render();
+    }
+    if (prefs.start_view && prefs.start_view !== "overview" && currentView === "overview") navTo(prefs.start_view);
   } catch (error) {
     console.error("Could not load your Supabase workspace.", error);
     viewRoot.innerHTML = `<section class="panel"><div class="empty-state"><strong>Couldn't load your workspace</strong><p>${escapeHtml(error.message || "Check your Supabase setup and try again.")}</p><button class="button button-secondary" id="retry-load">Try again</button></div></section>`;
@@ -384,7 +396,7 @@ function navTo(view) {
     if (active) link.setAttribute("aria-current", "page");
     else link.removeAttribute("aria-current");
   });
-  const labels = { overview: "Overview", reservations: "Reservations", properties: "Properties", channels: "Channels", inbox: "Inbox", operations: "Operations", reports: "Reports", website: "Website" };
+  const labels = { overview: "Overview", reservations: "Reservations", properties: "Properties", channels: "Channels", inbox: "Inbox", operations: "Operations", reports: "Reports", website: "Website", profile: "My profile", settings: "Settings" };
   document.querySelector("#breadcrumb-current").textContent = labels[view];
   const title = document.querySelector("#page-title");
   const subtitle = document.querySelector("#page-subtitle");
@@ -397,8 +409,11 @@ function navTo(view) {
     reports: "Revenue, occupancy, ADR, expenses and owner statements.",
     operations: "Turnover cleaning and maintenance, assigned and tracked.",
     inbox: "Every guest conversation in one place, with automated messages.",
-    channels: "Keep Airbnb, Vrbo and Booking.com calendars in sync to prevent double bookings."
+    channels: "Keep Airbnb, Vrbo and Booking.com calendars in sync to prevent double bookings.",
+    profile: "Your personal and business details.",
+    settings: "Preferences, security and your data."
   }[view];
+  document.querySelector(".heading-actions").hidden = view === "profile" || view === "settings";
   render();
   if (view === "channels") void syncAll({ quiet: true });
   if (view === "inbox") void runAutomations({ quiet: true });
@@ -414,6 +429,8 @@ function render() {
   if (currentView === "operations") renderOperations();
   if (currentView === "reports") renderReports();
   if (currentView === "website") renderWebsite();
+  if (currentView === "profile") renderProfile();
+  if (currentView === "settings") renderSettings();
   updateConflictBadge();
 }
 
@@ -532,6 +549,182 @@ function renderOverview() {
       </div>
     </section>`;
 }
+
+const START_VIEWS = { overview: "Overview", reservations: "Reservations", properties: "Properties", channels: "Channels", inbox: "Inbox", operations: "Operations", reports: "Reports", website: "Website" };
+
+function meta() {
+  return currentUser?.user_metadata || {};
+}
+
+function avatarHtml(className = "profile-avatar") {
+  const url = meta().avatar_url;
+  return url
+    ? `<span class="${className} has-photo" style="background-image:url('${escapeHtml(url)}')" role="img" aria-label="Profile photo"></span>`
+    : `<span class="${className}">${escapeHtml(initials(displayName()))}</span>`;
+}
+
+function renderProfile() {
+  const info = meta();
+  const joined = currentUser?.created_at ? formatDate(currentUser.created_at.slice(0, 10), { month: "long", day: "numeric", year: "numeric" }) : "";
+  const stays = data.reservations.filter((reservation) => reservation.status !== "cancelled").length;
+  viewRoot.innerHTML = `
+    <div class="profile-layout">
+      <section class="panel profile-card">
+        ${avatarHtml()}
+        <h2>${escapeHtml(displayName())}</h2>
+        <p class="profile-sub">${escapeHtml(info.business_name || "Property owner")}</p>
+        <p class="profile-sub">${escapeHtml(currentUser?.email || "")}</p>
+        <div class="profile-stats">
+          <div><strong>${data.properties.length}</strong><span>Properties</span></div>
+          <div><strong>${stays}</strong><span>Stays</span></div>
+          <div><strong>${data.owners.length}</strong><span>Owners</span></div>
+        </div>
+        ${joined ? `<p class="profile-sub">Member since ${escapeHtml(joined)}</p>` : ""}
+        <div class="profile-photo-actions">
+          <label class="button button-secondary photo-pick">Change photo<input type="file" id="avatar-file" accept="image/*" hidden></label>
+          ${info.avatar_url ? `<button class="button button-secondary" type="button" data-account="remove-avatar">Remove</button>` : ""}
+        </div>
+      </section>
+      <section class="panel">
+        <div class="panel-heading"><div><h2>Personal details</h2><p>Shown on your account menu and owner statements.</p></div></div>
+        <form id="profile-form" class="settings-form" novalidate>
+          <div class="field"><label for="p-name">Full name</label><input id="p-name" name="full_name" maxlength="80" required value="${escapeHtml(info.full_name || displayName())}"></div>
+          <div class="field"><label for="p-business">Business / brand name</label><input id="p-business" name="business_name" maxlength="100" value="${escapeHtml(info.business_name || "")}" placeholder="e.g. Blue Mountain Stays"></div>
+          <div class="field"><label for="p-phone">Phone / WhatsApp</label><input id="p-phone" name="phone" type="tel" maxlength="40" value="${escapeHtml(info.phone || "")}"></div>
+          <div class="field"><label for="p-location">Location</label><input id="p-location" name="location" maxlength="100" value="${escapeHtml(info.location || "")}" placeholder="Kingston, Jamaica"></div>
+          <div class="field full"><label for="p-bio">About you</label><textarea id="p-bio" name="bio" maxlength="400" placeholder="A short note about how you host">${escapeHtml(info.bio || "")}</textarea></div>
+          <div class="field"><label for="p-email">Email</label><input id="p-email" value="${escapeHtml(currentUser?.email || "")}" disabled></div>
+          <div class="settings-actions full"><button class="button button-primary" type="submit">Save profile</button></div>
+        </form>
+      </section>
+    </div>`;
+}
+
+function renderSettings() {
+  const info = meta();
+  viewRoot.innerHTML = `
+    <div class="settings-grid">
+      <section class="panel">
+        <div class="panel-heading"><div><h2>Preferences</h2><p>Saved to your account, so they follow you across devices.</p></div></div>
+        <form id="prefs-form" class="settings-form" novalidate>
+          <div class="field"><label for="s-currency">Display currency</label>
+            <select id="s-currency" name="currency">${["USD", "JMD", "GBP", "EUR", "CAD"].map((code) => `<option ${code === currencyCode() ? "selected" : ""}>${code}</option>`).join("")}</select></div>
+          <div class="field"><label for="s-start">Open on this page after sign-in</label>
+            <select id="s-start" name="start_view">${Object.entries(START_VIEWS).map(([key, label]) => `<option value="${key}" ${key === (info.start_view || "overview") ? "selected" : ""}>${label}</option>`).join("")}</select></div>
+          <div class="settings-actions full"><button class="button button-primary" type="submit">Save preferences</button></div>
+        </form>
+      </section>
+      <section class="panel">
+        <div class="panel-heading"><div><h2>Password</h2><p>Use at least 8 characters.</p></div></div>
+        <form id="password-form" class="settings-form" novalidate>
+          <div class="field"><label for="s-pass">New password</label><input id="s-pass" name="password" type="password" minlength="8" autocomplete="new-password" required></div>
+          <div class="field"><label for="s-pass2">Confirm new password</label><input id="s-pass2" name="confirm" type="password" minlength="8" autocomplete="new-password" required></div>
+          <div class="settings-actions full"><button class="button button-primary" type="submit">Update password</button></div>
+        </form>
+      </section>
+      <section class="panel">
+        <div class="panel-heading"><div><h2>Email address</h2><p>We’ll send a confirmation link to the new address.</p></div></div>
+        <form id="email-form" class="settings-form" novalidate>
+          <div class="field full"><label for="s-email">New email</label><input id="s-email" name="email" type="email" required placeholder="${escapeHtml(currentUser?.email || "")}" autocomplete="email"></div>
+          <div class="settings-actions full"><button class="button button-primary" type="submit">Change email</button></div>
+        </form>
+      </section>
+      <section class="panel">
+        <div class="panel-heading"><div><h2>Your data &amp; sessions</h2><p>Take a copy of your records or sign out elsewhere.</p></div></div>
+        <div class="settings-actions stack">
+          <button class="button button-secondary" type="button" data-account="export">Download my data (JSON)</button>
+          <button class="button button-secondary" type="button" data-account="signout-others">Sign out of other devices</button>
+          <button class="button button-secondary danger-outline" type="button" data-account="signout">Sign out</button>
+        </div>
+      </section>
+    </div>`;
+}
+
+function setBusy(form, busy) {
+  form.querySelectorAll("button[type=submit]").forEach((button) => { button.disabled = busy; });
+}
+
+async function saveMeta(patch, message) {
+  const { data: result, error } = await supabase.auth.updateUser({ data: patch });
+  if (error) { showToast(error.message || "Could not save."); return false; }
+  currentUser = result.user || currentUser;
+  paintUser();
+  showToast(message);
+  return true;
+}
+
+async function uploadAvatar(file) {
+  if (!file.type.startsWith("image/")) { showToast("Choose an image file."); return; }
+  if (file.size > 4 * 1024 * 1024) { showToast("Photo must be under 4 MB."); return; }
+  const extension = (file.name.split(".").pop() || "jpg").replace(/[^a-z0-9]/gi, "").slice(0, 5).toLowerCase() || "jpg";
+  const path = `${currentUser.id}/avatar-${Date.now()}.${extension}`;
+  showToast("Uploading photo…");
+  const { error } = await supabase.storage.from("property-photos").upload(path, file, { contentType: file.type });
+  if (error) { showToast(error.message || "Could not upload photo."); return; }
+  const url = supabase.storage.from("property-photos").getPublicUrl(path).data.publicUrl;
+  if (await saveMeta({ avatar_url: url }, "Profile photo updated.")) render();
+}
+
+async function exportData() {
+  const payload = { exported_at: new Date().toISOString(), account: { email: currentUser.email, ...meta() }, ...data };
+  const blob = new Blob([JSON.stringify(payload, null, 2)], { type: "application/json" });
+  const link = document.createElement("a");
+  link.href = URL.createObjectURL(blob);
+  link.download = `havenstay-data-${localDate(new Date())}.json`;
+  link.click();
+  URL.revokeObjectURL(link.href);
+}
+
+viewRoot.addEventListener("change", (event) => {
+  if (event.target.id === "avatar-file" && event.target.files[0]) void uploadAvatar(event.target.files[0]);
+});
+
+viewRoot.addEventListener("click", async (event) => {
+  const button = event.target.closest("[data-account]");
+  if (!button || !supabase) return;
+  const action = button.dataset.account;
+  if (action === "remove-avatar") { if (await saveMeta({ avatar_url: null }, "Profile photo removed.")) render(); }
+  else if (action === "export") await exportData();
+  else if (action === "signout") await signOut();
+  else if (action === "signout-others") {
+    const { error } = await supabase.auth.signOut({ scope: "others" });
+    showToast(error ? error.message || "Could not sign out other devices." : "Signed out of other devices.");
+  }
+});
+
+viewRoot.addEventListener("submit", async (event) => {
+  const form = event.target;
+  if (!["profile-form", "prefs-form", "password-form", "email-form"].includes(form.id)) return;
+  event.preventDefault();
+  if (!supabase || !form.reportValidity()) return;
+  const values = Object.fromEntries(new FormData(form).entries());
+  setBusy(form, true);
+  try {
+    if (form.id === "profile-form") {
+      const patch = {};
+      ["full_name", "business_name", "phone", "location", "bio"].forEach((key) => { patch[key] = String(values[key] || "").trim(); });
+      if (!patch.full_name) { showToast("Please enter your name."); return; }
+      if (await saveMeta(patch, "Profile saved.")) render();
+    } else if (form.id === "prefs-form") {
+      localStorage.setItem(CURRENCY_KEY, values.currency);
+      document.querySelector("#currency-select").value = values.currency;
+      await saveMeta({ currency: values.currency, start_view: values.start_view }, "Preferences saved.");
+    } else if (form.id === "password-form") {
+      if (values.password !== values.confirm) { showToast("Passwords don’t match."); return; }
+      const { error } = await supabase.auth.updateUser({ password: values.password });
+      if (error) { showToast(error.message || "Could not update password."); return; }
+      form.reset();
+      showToast("Password updated.");
+    } else {
+      const { error } = await supabase.auth.updateUser({ email: values.email.trim() }, { emailRedirectTo: `${window.location.origin}/app.html` });
+      if (error) { showToast(error.message || "Could not change email."); return; }
+      form.reset();
+      showToast("Check your new inbox to confirm the change.");
+    }
+  } finally {
+    setBusy(form, false);
+  }
+});
 
 function renderReservations() {
   const query = (document.querySelector("#reservation-search")?.value || "").trim().toLowerCase();
@@ -1861,16 +2054,6 @@ userDropdown.addEventListener("click", async (event) => {
   setUserMenu(false);
   if (item.dataset.menuNav) navTo(item.dataset.menuNav);
   else if (item.id === "menu-signout") await signOut();
-  else if (item.id === "menu-edit-name") {
-    const next = window.prompt("Display name", displayName());
-    if (next === null || !next.trim() || !supabase) return;
-    const { data: result, error } = await supabase.auth.updateUser({ data: { full_name: next.trim() } });
-    if (error) { showToast(error.message || "Could not update name."); return; }
-    currentUser = result.user || currentUser;
-    paintUser();
-    document.querySelector("#page-title").innerHTML = `${greeting()}, ${escapeHtml(displayName())} <span class="wave">✦</span>`;
-    showToast("Display name updated.");
-  }
 });
 
 setTodayLabel();

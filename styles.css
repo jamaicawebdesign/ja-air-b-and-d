@@ -713,3 +713,28 @@ td { border-color: #dfe7e2; font-size: 13px; color: #1d2a23; }
 .photo-remove { position: absolute; top: 3px; right: 3px; width: 22px; height: 22px; border-radius: 50%; border: 0; background: #000; color: #fff; cursor: pointer; line-height: 1; }
 .photo-cover, .photo-make-cover { display: block; width: 100%; margin-top: 4px; font-size: 11px; font-weight: 700; text-align: center; color: #000; background: var(--gold); border: 0; border-radius: 6px; padding: 2px 0; }
 .photo-make-cover { background: #fff; border: 1px solid #000; cursor: pointer; }
+
+/* Profile & settings */
+.profile-layout { display: grid; grid-template-columns: 320px 1fr; gap: 20px; align-items: start; }
+.settings-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 20px; align-items: start; }
+.profile-card { text-align: center; padding: 28px 22px; display: grid; gap: 6px; justify-items: center; }
+.profile-card h2 { margin: 8px 0 0; }
+.profile-sub { margin: 0; color: #000; font-size: 14px; }
+.profile-avatar { width: 112px; height: 112px; border-radius: 50%; display: grid; place-items: center; background: var(--gold) center / cover no-repeat; color: #000; font-size: 40px; font-weight: 800; border: 3px solid #000; box-shadow: 0 0 0 4px var(--green); }
+.profile-stats { display: grid; grid-template-columns: repeat(3, 1fr); width: 100%; margin: 12px 0; border: 1.5px solid #000; border-radius: 12px; overflow: hidden; }
+.profile-stats div { padding: 10px 4px; display: grid; }
+.profile-stats div + div { border-left: 1.5px solid #000; }
+.profile-stats strong { font-size: 22px; }
+.profile-stats span { font-size: 12px; font-weight: 700; color: #000; }
+.profile-photo-actions { display: flex; gap: 8px; margin-top: 10px; flex-wrap: wrap; justify-content: center; }
+.photo-pick { cursor: pointer; }
+.settings-form { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; padding: 4px 22px 22px; }
+.settings-form .full, .settings-actions.full { grid-column: 1 / -1; }
+.settings-actions { display: flex; gap: 10px; justify-content: flex-end; }
+.settings-actions.stack { flex-direction: column; align-items: stretch; padding: 4px 22px 22px; }
+.danger-outline { color: #b3261e; border-color: #b3261e; }
+.avatar.has-photo, .user-trigger .avatar.has-photo { background-size: cover; background-position: center; }
+@media (max-width: 1000px) { .profile-layout, .settings-grid { grid-template-columns: 1fr; } }
+@media (max-width: 560px) { .settings-form { grid-template-columns: 1fr; } }
+.heading-actions[hidden] { display: none; }
+.photo-pick { display: inline-flex; align-items: center; justify-content: center; }
