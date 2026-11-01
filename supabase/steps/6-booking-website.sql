@@ -1,5 +1,7 @@
 -- Direct booking website & engine (run this block after the sections above)
 alter table public.properties add column if not exists listed boolean not null default false;
+alter table public.properties add column if not exists photos text[] not null default '{}';
+alter table public.properties add column if not exists amenities text[] not null default '{}';
 
 create table if not exists public.booking_sites (
   id uuid primary key default gen_random_uuid(),
