@@ -102,3 +102,6 @@ Edit a property to upload up to 6 photos (first is the cover) and add amenities.
 ## Profile & settings
 
 Open the avatar menu → **My profile** (photo, name, business, phone, location, bio) or **Settings** (display currency, start page, password, email, data export, sign out of other devices). Details are stored in your Supabase auth user metadata; profile photos use the public `property-photos` bucket (run `supabase/schema.sql`).
+
+## Landing page demo
+The landing page (`index.html`) embeds a live sample booking site (`/book.html?demo=1`, sample data in `demo-data.js`, no backend calls), dashboard screenshots in `public/screenshots/`, a feature list, and WhatsApp links (`wa.me/18765497399`) including a "Request a demo" button.

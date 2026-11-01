@@ -2,12 +2,15 @@
 
 import { createClient } from "@supabase/supabase-js";
 import { SUPABASE_KEY, SUPABASE_URL } from "./supabase-config.js";
+import { DEMO_SITE, demoBusy } from "./demo-data.js";
 
 const $ = (selector) => document.querySelector(selector);
 const statusBox = $("#status");
 const grid = $("#properties");
 const dialog = $("#listing");
-const slug = (new URLSearchParams(window.location.search).get("s") || "").toLowerCase();
+const params = new URLSearchParams(window.location.search);
+const demo = params.get("demo") === "1";
+const slug = (params.get("s") || "").toLowerCase();
 
 const escapeHtml = (value) => String(value ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]);
 const iso = (date) => `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`;
@@ -66,12 +69,18 @@ function renderList() {
 }
 
 async function init() {
-  if (!slug) return fail("This booking link is incomplete.");
-  if (!SUPABASE_URL || !SUPABASE_KEY) return fail("This site is not configured yet.");
-  supabase = createClient(SUPABASE_URL, SUPABASE_KEY);
-  const { data, error } = await supabase.rpc("site_info", { p_slug: slug });
-  if (error || !data) return fail("This booking site isn't available right now.");
-  site = data;
+  if (demo) {
+    document.body.classList.add("demo");
+    $("#demo-badge").hidden = false;
+    site = DEMO_SITE;
+  } else {
+    if (!slug) return fail("This booking link is incomplete.");
+    if (!SUPABASE_URL || !SUPABASE_KEY) return fail("This site is not configured yet.");
+    supabase = createClient(SUPABASE_URL, SUPABASE_KEY);
+    const { data, error } = await supabase.rpc("site_info", { p_slug: slug });
+    if (error || !data) return fail("This booking site isn't available right now.");
+    site = data;
+  }
   document.title = `${site.brand_name} · Book direct`;
   $("#brand").textContent = site.brand_name;
   $("#brand-name").textContent = site.brand_name;
@@ -109,8 +118,11 @@ function galleryHtml(property, index) {
 async function openBooking(id) {
   const property = site.properties.find((entry) => entry.id === id);
   if (!property) return;
-  const { data } = await supabase.rpc("site_busy", { p_slug: slug, p_property: id });
-  busy = data || [];
+  if (demo) busy = demoBusy();
+  else {
+    const { data } = await supabase.rpc("site_busy", { p_slug: slug, p_property: id });
+    busy = data || [];
+  }
   const today = new Date();
   const tomorrow = new Date(today.getTime() + 86400000);
   const body = $("#listing-body");
@@ -139,7 +151,7 @@ async function openBooking(id) {
         <label>Anything we should know?<textarea name="notes" maxlength="500"></textarea></label>
         <p id="form-error" class="error-text" role="alert" hidden></p>
         <button class="btn" type="submit" id="submit">Request to book</button>
-        <p class="fine">Your request goes to the host, who confirms it and arranges payment with you directly. You are not charged now.</p>
+        <p class="fine">${demo ? "This is a sample site, so nothing is sent. " : ""}Your request goes to the host, who confirms it and arranges payment with you directly. You are not charged now.</p>
       </form>
     </div>`;
   if (!dialog.open) dialog.showModal();
@@ -174,10 +186,13 @@ async function openBooking(id) {
     const values = Object.fromEntries(new FormData(form).entries());
     const button = $("#submit");
     button.disabled = true;
-    const { data: result, error: rpcError } = await supabase.rpc("site_book", {
-      p_slug: slug, p_property: id, p_guest: values.guest, p_email: values.email, p_phone: values.phone,
-      p_check_in: values.checkIn, p_check_out: values.checkOut, p_guests: Number(values.guests), p_notes: values.notes
-    });
+    const nights = nightsBetween(values.checkIn, values.checkOut);
+    const { data: result, error: rpcError } = demo
+      ? { data: { nights, total: nights * property.rate }, error: null }
+      : await supabase.rpc("site_book", {
+        p_slug: slug, p_property: id, p_guest: values.guest, p_email: values.email, p_phone: values.phone,
+        p_check_in: values.checkIn, p_check_out: values.checkOut, p_guests: Number(values.guests), p_notes: values.notes
+      });
     if (rpcError) {
       error.textContent = rpcError.message || "Could not send your request.";
       error.hidden = false;
