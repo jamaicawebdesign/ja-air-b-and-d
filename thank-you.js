@@ -1,4 +1,6 @@
+import { createClient } from "@supabase/supabase-js";
 import { PAYMENT } from "./payment-config.js";
+import { SUPABASE_KEY, SUPABASE_URL } from "./supabase-config.js";
 
 const params = new URLSearchParams(window.location.search);
 const email = params.get("email") || "";
@@ -29,10 +31,22 @@ const bank = $("#bank");
   bank.append(dt, dd);
 });
 
+const client = SUPABASE_URL && SUPABASE_KEY ? createClient(SUPABASE_URL, SUPABASE_KEY) : null;
+
+async function savePlan(plan) {
+  localStorage.setItem("havenstay_plan", plan.toLowerCase());
+  if (!client) return;
+  const { data } = await client.auth.getSession();
+  if (!data.session) return;
+  const { error } = await client.rpc("choose_plan", { p_plan: plan.toLowerCase() });
+  if (!error) localStorage.removeItem("havenstay_plan");
+}
+
 function updateLink() {
   const plan = document.querySelector("input[name=plan]:checked")?.value || "";
   const msg = `Hi Havenstay, I've made a bank transfer for the ${plan} plan. Account email: ${email || "(my email)"}. Proof of payment attached.`;
   $("#wa").href = `https://wa.me/${PAYMENT.whatsapp}?text=${encodeURIComponent(msg)}`;
 }
-plansBox.addEventListener("change", updateLink);
+plansBox.addEventListener("change", () => { updateLink(); void savePlan(document.querySelector("input[name=plan]:checked").value); });
 updateLink();
+void savePlan(document.querySelector("input[name=plan]:checked").value);
