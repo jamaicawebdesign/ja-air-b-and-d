@@ -97,4 +97,4 @@ The Overview shows dependency-free SVG charts (`charts.js`): revenue vs expenses
 
 ### Listing photos & amenities
 
-Edit a property to upload up to 6 photos (first is the cover) and add amenities. They show on the direct booking site as a card cover, a gallery and amenity chips. Run the "Listing photos & amenities" block at the end of `supabase/schema.sql` and re-run the `site_info` function so it returns them.
+Edit a property to upload up to 6 photos (first is the cover) and add amenities. They show on the direct booking site as a card cover, a gallery and amenity chips. Run `supabase/listing-photos.sql` in the Supabase SQL editor (safe to re-run).
