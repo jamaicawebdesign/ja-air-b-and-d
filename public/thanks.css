@@ -1,0 +1,18 @@
+body { background: #f2f5f3; }
+.thanks { display: grid; place-items: start center; padding: 40px 16px 80px; }
+.thanks-card { width: 100%; max-width: 720px; background: #fff; border: 2px solid #000; border-radius: 16px; padding: 32px; box-shadow: 0 20px 50px rgba(0,0,0,.12); }
+.thanks-card h1 { margin: 4px 0 12px; font-size: 38px; color: #000; }
+.lead-dark { font-size: 18px; color: #1d2a22; }
+.note { background: #fff6c2; border-radius: 10px; padding: 12px 14px; color: #4a4000; }
+.pay-steps { list-style: none; counter-reset: s; padding: 0; margin: 24px 0; display: grid; gap: 18px; }
+.pay-steps > li { counter-increment: s; position: relative; padding-left: 48px; color: #1d2a22; }
+.pay-steps > li::before { content: counter(s); position: absolute; left: 0; top: 0; width: 34px; height: 34px; border-radius: 50%; background: #fed100; color: #000; font-weight: 800; display: grid; place-items: center; }
+.plans { display: grid; gap: 8px; margin-top: 10px; }
+.plan { display: flex; gap: 10px; align-items: center; border: 1px solid #c8d4cd; border-radius: 10px; padding: 10px 12px; cursor: pointer; }
+.plan:has(input:checked) { border-color: #009b3a; background: #eaf7ef; }
+.bank { display: grid; grid-template-columns: 140px 1fr; gap: 6px 12px; background: #0b1a12; color: #fff; border-radius: 12px; padding: 16px; margin: 10px 0; }
+.bank dt { color: #fed100; font-weight: 700; }
+.bank dd { margin: 0; word-break: break-word; }
+.small { font-size: 13px; color: #55645b; }
+.thanks-actions { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 10px; }
+.btn-ghost-light { border: 1px solid #000; color: #000; background: #fff; }

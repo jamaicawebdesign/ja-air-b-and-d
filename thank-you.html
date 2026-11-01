@@ -1,0 +1,36 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="robots" content="noindex">
+    <title>Thank you · Havenstay</title>
+    <link rel="stylesheet" href="/landing.css">
+    <link rel="stylesheet" href="/thanks.css">
+    <script type="module" src="/thank-you.js"></script>
+  </head>
+  <body>
+    <header class="nav"><div class="nav-inner"><a class="logo" href="/"><span class="logo-mark">h</span>havenstay</a></div></header>
+    <main class="thanks">
+      <div class="thanks-card">
+        <p class="kicker dark">Account created ✓</p>
+        <h1>Thank you<span id="who"></span>!</h1>
+        <p id="confirm-note" class="note" hidden>We sent a confirmation link to your email. Please confirm it, then sign in.</p>
+        <p class="lead-dark">One last step to finish onboarding and get your account <b>verified</b>: make your first payment by bank transfer.</p>
+
+        <ol class="pay-steps">
+          <li><b>Pick your plan</b> and the amount.<div class="plans" id="plans"></div></li>
+          <li><b>Transfer to our bank account</b>
+            <dl class="bank" id="bank"></dl>
+            <p class="small">Use <b id="ref">your account email</b> as the payment reference so we can match it.</p>
+          </li>
+          <li><b>Send us proof of payment</b> on WhatsApp.<br><a class="btn btn-wa btn-lg" id="wa" target="_blank" rel="noopener">Send proof on WhatsApp</a></li>
+          <li><b>We verify within 1 business day</b> and unlock your full account.</li>
+        </ol>
+
+        <div class="thanks-actions"><a class="btn btn-green" href="/app.html#signin">Go to my dashboard</a><a class="btn btn-ghost-light" href="/">Back to home</a></div>
+        <p class="small">You can explore the dashboard while we verify your payment.</p>
+      </div>
+    </main>
+  </body>
+</html>

@@ -1994,9 +1994,8 @@ authForm.addEventListener("submit", async (event) => {
     if (authMode() === "signup") {
       const { data: result, error } = await supabase.auth.signUp({ email, password, options: { data: { full_name: name } } });
       if (error) throw error;
-      if (!result.session) {
-        setAuthMessage("Account created. Check your email to confirm your address, then sign in.", false);
-      }
+      window.location.href = `/thank-you.html?email=${encodeURIComponent(email)}&name=${encodeURIComponent(name || "")}${result.session ? "" : "&confirm=1"}`;
+      return;
     } else {
       const { error } = await supabase.auth.signInWithPassword({ email, password });
       if (error) throw error;
