@@ -7,19 +7,70 @@
     <link rel="stylesheet" href="/book.css" />
   </head>
   <body>
-    <header class="hero">
+    <header class="site-header">
+      <div class="header-inner">
+        <a class="brand" href="#top"><span class="brand-mark" id="brand-mark">H</span><span id="brand-name">Book your stay</span></a>
+        <nav class="site-nav" aria-label="Main">
+          <a href="#stays">Stays</a>
+          <a href="#why">Why book direct</a>
+          <a href="#contact">Contact</a>
+          <a class="nav-cta" href="#stays">Book now</a>
+        </nav>
+      </div>
+    </header>
+
+    <section class="hero" id="top">
+      <div class="hero-overlay"></div>
       <div class="hero-inner">
         <p class="hero-kicker">Book direct · No service fees</p>
         <h1 id="brand">Book your stay</h1>
         <p id="tagline" class="hero-tagline"></p>
+        <form class="search" id="search" novalidate>
+          <label>Where<input id="q" type="search" placeholder="Search by name or location" autocomplete="off"></label>
+          <label>Bedrooms
+            <select id="beds"><option value="0">Any</option><option value="1">1+</option><option value="2">2+</option><option value="3">3+</option><option value="4">4+</option></select>
+          </label>
+          <label>Sort by
+            <select id="sort"><option value="featured">Featured</option><option value="low">Price: low to high</option><option value="high">Price: high to low</option></select>
+          </label>
+          <button class="btn" type="submit">Search stays</button>
+        </form>
       </div>
-    </header>
-    <main class="wrap">
+    </section>
+
+    <section class="stats" id="stats" hidden></section>
+
+    <main class="wrap" id="stays">
+      <div class="section-head"><div><p class="eyebrow">Our places</p><h2 id="stays-title">Find your stay</h2></div><p id="count" class="count"></p></div>
       <p id="status" class="status-box" role="status">Loading…</p>
       <section id="properties" class="grid" hidden></section>
-      <section id="booking" class="booking" hidden aria-live="polite"></section>
     </main>
-    <footer class="foot"><span id="contact"></span></footer>
+
+    <section class="why" id="why">
+      <div class="wrap">
+        <div class="section-head"><div><p class="eyebrow">Why book direct</p><h2>Better for you, better for your host</h2></div></div>
+        <div class="why-grid">
+          <article><span class="why-icon">$</span><h3>No service fees</h3><p>Skip the platform markups. The price you see is the price you pay.</p></article>
+          <article><span class="why-icon">✓</span><h3>Live availability</h3><p>Dates that are taken are blocked instantly, so you never request a stay that is not free.</p></article>
+          <article><span class="why-icon">☺</span><h3>Talk to your host</h3><p>Your request goes straight to the host, who confirms and looks after you personally.</p></article>
+          <article><span class="why-icon">◎</span><h3>Local welcome</h3><p>Get tips and arrangements from someone who lives and works here.</p></article>
+        </div>
+      </div>
+    </section>
+
+    <section class="contact" id="contact">
+      <div class="wrap contact-inner">
+        <div><p class="eyebrow light">Get in touch</p><h2 id="contact-title">Questions before you book?</h2><p class="contact-lead">We reply quickly and are happy to help plan your stay.</p></div>
+        <div class="contact-actions" id="contact-actions"></div>
+      </div>
+    </section>
+
+    <footer class="foot"><span id="foot-brand"></span><span>Direct booking powered by Havenstay</span></footer>
+
+    <dialog id="listing" class="listing" aria-label="Listing details">
+      <button class="close" id="listing-close" type="button" aria-label="Close">×</button>
+      <div id="listing-body"></div>
+    </dialog>
     <script type="module" src="/book.js"></script>
   </body>
 </html>

@@ -6,7 +6,7 @@ import { SUPABASE_KEY, SUPABASE_URL } from "./supabase-config.js";
 const $ = (selector) => document.querySelector(selector);
 const statusBox = $("#status");
 const grid = $("#properties");
-const booking = $("#booking");
+const dialog = $("#listing");
 const slug = (new URLSearchParams(window.location.search).get("s") || "").toLowerCase();
 
 const escapeHtml = (value) => String(value ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]);
@@ -31,43 +31,79 @@ function amenityChips(list, limit) {
   return `<ul class="chips">${shown.map((entry) => `<li>${escapeHtml(entry)}</li>`).join("")}${extra > 0 ? `<li class="more">+${extra} more</li>` : ""}</ul>`;
 }
 
-function galleryHtml(property) {
-  const photos = property.photos || [];
-  if (!photos.length) return "";
-  return `<div class="gallery"><img id="gallery-main" src="${escapeHtml(photos[0])}" alt="${escapeHtml(property.name)}">${photos.length > 1 ? `<div class="thumbs">${photos.map((url, index) => `<button type="button" class="thumb${index === 0 ? " on" : ""}" data-photo="${escapeHtml(url)}" aria-label="Show photo ${index + 1}"><img src="${escapeHtml(url)}" alt="" loading="lazy"></button>`).join("")}</div>` : ""}</div>`;
+const bedsLabel = (count) => `${Number(count)} ${Number(count) === 1 ? "bedroom" : "bedrooms"}`;
+
+function cardHtml(property, index) {
+  const cover = property.photos?.[0];
+  const art = cover
+    ? `<div class="art" style="background-image:url('${escapeHtml(cover)}')" role="img" aria-label="${escapeHtml(property.name)}">`
+    : `<div class="art art-${index % 3}"><span>${escapeHtml(property.name.slice(0, 1))}</span>`;
+  return `<article class="card" tabindex="0" data-book="${escapeHtml(property.id)}">
+    ${art}<span class="price-tag">${money(property.rate)} <small>/ night</small></span>${property.photos?.length > 1 ? `<span class="photo-count">${property.photos.length} photos</span>` : ""}</div>
+    <div class="card-body">
+      <h3>${escapeHtml(property.name)}</h3>
+      <p class="loc">📍 ${escapeHtml(property.location)}</p>
+      <ul class="facts"><li>🛏 ${bedsLabel(property.bedrooms)}</li></ul>
+      <p class="desc">${escapeHtml((property.description || "").slice(0, 140))}${(property.description || "").length > 140 ? "…" : ""}</p>
+      ${amenityChips(property.amenities, 4)}
+      <button class="btn" type="button" data-book="${escapeHtml(property.id)}">View &amp; book</button>
+    </div>
+  </article>`;
+}
+
+function renderList() {
+  const query = $("#q").value.trim().toLowerCase();
+  const minBeds = Number($("#beds").value) || 0;
+  const sort = $("#sort").value;
+  let list = site.properties.filter((property) => `${property.name} ${property.location}`.toLowerCase().includes(query) && Number(property.bedrooms) >= minBeds);
+  if (sort === "low") list = [...list].sort((a, b) => a.rate - b.rate);
+  if (sort === "high") list = [...list].sort((a, b) => b.rate - a.rate);
+  $("#count").textContent = `${list.length} ${list.length === 1 ? "stay" : "stays"} available`;
+  grid.innerHTML = list.length ? list.map(cardHtml).join("") : "";
+  statusBox.hidden = Boolean(list.length);
+  statusBox.classList.remove("error");
+  if (!list.length) statusBox.textContent = "No stays match your search. Try clearing the filters.";
 }
 
 async function init() {
-  const url = SUPABASE_URL;
-  const key = SUPABASE_KEY;
   if (!slug) return fail("This booking link is incomplete.");
-  if (!url || !key) return fail("This site is not configured yet.");
-  supabase = createClient(url, key);
+  if (!SUPABASE_URL || !SUPABASE_KEY) return fail("This site is not configured yet.");
+  supabase = createClient(SUPABASE_URL, SUPABASE_KEY);
   const { data, error } = await supabase.rpc("site_info", { p_slug: slug });
   if (error || !data) return fail("This booking site isn't available right now.");
   site = data;
   document.title = `${site.brand_name} · Book direct`;
   $("#brand").textContent = site.brand_name;
-  $("#tagline").textContent = site.tagline || "";
-  const contact = [site.contact_email, site.contact_phone].filter(Boolean).map(escapeHtml).join(" · ");
-  $("#contact").innerHTML = contact ? `Questions? ${contact}` : "";
+  $("#brand-name").textContent = site.brand_name;
+  $("#brand-mark").textContent = site.brand_name.trim().slice(0, 1).toUpperCase();
+  $("#foot-brand").textContent = `© ${new Date().getFullYear()} ${site.brand_name}`;
+  $("#tagline").textContent = site.tagline || "Comfortable stays, booked directly with your host.";
+  $("#contact-title").textContent = `Questions about ${site.brand_name}?`;
+  const links = [
+    site.contact_email && `<a class="btn" href="mailto:${escapeHtml(site.contact_email)}">✉ ${escapeHtml(site.contact_email)}</a>`,
+    site.contact_phone && `<a class="btn ghost" href="tel:${escapeHtml(site.contact_phone.replace(/[^\d+]/g, ""))}">☎ ${escapeHtml(site.contact_phone)}</a>`
+  ].filter(Boolean);
+  $("#contact-actions").innerHTML = links.join("") || `<a class="btn" href="#stays">Browse stays</a>`;
   if (!site.properties.length) return fail("No properties are open for booking yet. Please check back soon.");
-  statusBox.hidden = true;
+
+  const hero = site.properties.find((property) => property.photos?.length)?.photos[0];
+  if (hero) $(".hero").style.backgroundImage = `url('${hero.replace(/'/g, "%27")}')`;
+  const rates = site.properties.map((property) => Number(property.rate));
+  const stats = $("#stats");
+  stats.hidden = false;
+  stats.innerHTML = `<div class="stats-inner">
+    <div class="stat"><strong>${site.properties.length}</strong><span>${site.properties.length === 1 ? "Stay" : "Stays"}</span></div>
+    <div class="stat"><strong>${money(Math.min(...rates))}</strong><span>From / night</span></div>
+    <div class="stat"><strong>0%</strong><span>Service fees</span></div>
+    <div class="stat"><strong>Direct</strong><span>Host confirmation</span></div></div>`;
   grid.hidden = false;
-  grid.innerHTML = site.properties.map((property, index) => `
-    <article class="card">
-      ${property.photos?.[0]
-        ? `<div class="art photo" style="background-image:url('${escapeHtml(property.photos[0])}')" role="img" aria-label="${escapeHtml(property.name)}">${property.photos.length > 1 ? `<span class="photo-count">${property.photos.length} photos</span>` : ""}</div>`
-        : `<div class="art art-${index % 3}"><span>${escapeHtml(property.name.slice(0, 1))}</span></div>`}
-      <div class="card-body">
-        <h2>${escapeHtml(property.name)}</h2>
-        <p class="meta">${escapeHtml(property.location)} · ${Number(property.bedrooms)} ${Number(property.bedrooms) === 1 ? "bedroom" : "bedrooms"}</p>
-        <p class="desc">${escapeHtml(property.description)}</p>
-        ${amenityChips(property.amenities, 4)}
-        <div class="card-foot"><strong>${money(property.rate)}</strong><span> / night</span>
-          <button class="btn" data-book="${escapeHtml(property.id)}">View &amp; book</button></div>
-      </div>
-    </article>`).join("");
+  renderList();
+}
+
+function galleryHtml(property, index) {
+  const photos = property.photos || [];
+  if (!photos.length) return `<div class="gallery"><div class="placeholder">${escapeHtml(property.name.slice(0, 1))}</div></div>`;
+  return `<div class="gallery"><img id="gallery-main" src="${escapeHtml(photos[0])}" alt="${escapeHtml(property.name)}">${photos.length > 1 ? `<div class="thumbs">${photos.map((url, i) => `<button type="button" class="thumb${i === 0 ? " on" : ""}" data-photo="${escapeHtml(url)}" aria-label="Show photo ${i + 1}"><img src="${escapeHtml(url)}" alt="" loading="lazy"></button>`).join("")}</div>` : ""}</div>`;
 }
 
 async function openBooking(id) {
@@ -77,48 +113,52 @@ async function openBooking(id) {
   busy = data || [];
   const today = new Date();
   const tomorrow = new Date(today.getTime() + 86400000);
-  booking.hidden = false;
-  booking.innerHTML = `
-    <form id="book-form" class="form" novalidate>
-      ${galleryHtml(property)}
-      <div><h2>${escapeHtml(property.name)}</h2>
-        <p class="meta">${escapeHtml(property.location)} · ${Number(property.bedrooms)} ${Number(property.bedrooms) === 1 ? "bedroom" : "bedrooms"} · ${money(property.rate)} / night</p></div>
-      ${property.description ? `<p class="desc">${escapeHtml(property.description)}</p>` : ""}
-      ${amenityChips(property.amenities, 30)}
-      <div class="row">
-        <label>Check-in<input type="date" name="checkIn" min="${iso(today)}" value="${iso(tomorrow)}" required></label>
-        <label>Check-out<input type="date" name="checkOut" min="${iso(tomorrow)}" required></label>
+  const body = $("#listing-body");
+  body.innerHTML = `
+    <div class="detail">
+      <div>
+        ${galleryHtml(property)}
+        <h2>${escapeHtml(property.name)}</h2>
+        <p class="loc">📍 ${escapeHtml(property.location)} · 🛏 ${bedsLabel(property.bedrooms)}</p>
+        ${property.description ? `<h3>About this place</h3><p class="desc">${escapeHtml(property.description)}</p>` : ""}
+        ${property.amenities?.length ? `<h3>Amenities</h3>${amenityChips(property.amenities, 40)}` : ""}
       </div>
-      <p id="quote" class="quote" role="status">Choose your dates to see the total.</p>
-      <div class="row">
+      <form id="book-form" class="booking-card" novalidate>
+        <div class="rate">${money(property.rate)} <small>/ night</small></div>
+        <div class="row">
+          <label>Check-in<input type="date" name="checkIn" min="${iso(today)}" value="${iso(tomorrow)}" required></label>
+          <label>Check-out<input type="date" name="checkOut" min="${iso(tomorrow)}" required></label>
+        </div>
+        <p id="quote" class="quote" role="status">Choose your dates to see the total.</p>
         <label>Full name<input name="guest" maxlength="120" required autocomplete="name"></label>
         <label>Email<input name="email" type="email" maxlength="200" required autocomplete="email"></label>
-      </div>
-      <div class="row">
-        <label>Phone / WhatsApp (optional)<input name="phone" type="tel" maxlength="40" autocomplete="tel"></label>
-        <label>Guests<input name="guests" type="number" min="1" max="50" value="1" required></label>
-      </div>
-      <label>Anything we should know? (optional)<textarea name="notes" maxlength="500"></textarea></label>
-      <p id="form-error" class="error-text" role="alert" hidden></p>
-      <div class="row actions"><button type="button" class="btn ghost" id="cancel">Back</button><button class="btn" type="submit" id="submit">Request to book</button></div>
-      <p class="fine">Your request is sent to the host, who will confirm it and arrange payment with you directly. You are not charged now.</p>
-    </form>`;
-  booking.scrollIntoView({ behavior: "smooth", block: "start" });
+        <div class="row">
+          <label>Phone / WhatsApp<input name="phone" type="tel" maxlength="40" autocomplete="tel"></label>
+          <label>Guests<input name="guests" type="number" min="1" max="50" value="1" required></label>
+        </div>
+        <label>Anything we should know?<textarea name="notes" maxlength="500"></textarea></label>
+        <p id="form-error" class="error-text" role="alert" hidden></p>
+        <button class="btn" type="submit" id="submit">Request to book</button>
+        <p class="fine">Your request goes to the host, who confirms it and arranges payment with you directly. You are not charged now.</p>
+      </form>
+    </div>`;
+  if (!dialog.open) dialog.showModal();
+  dialog.scrollTop = 0;
   const form = $("#book-form");
-  form.addEventListener("click", (event) => {
+  const quote = $("#quote");
+  const error = $("#form-error");
+  form.parentElement.addEventListener("click", (event) => {
     const thumb = event.target.closest("[data-photo]");
     if (!thumb) return;
     $("#gallery-main").src = thumb.dataset.photo;
-    form.querySelectorAll(".thumb").forEach((entry) => entry.classList.toggle("on", entry === thumb));
+    body.querySelectorAll(".thumb").forEach((entry) => entry.classList.toggle("on", entry === thumb));
   });
-  const quote = $("#quote");
-  const error = $("#form-error");
 
   const clash = (start, end) => busy.some((range) => range.check_in < end && range.check_out > start);
   const update = () => {
     const { checkIn, checkOut } = form.elements;
     if (checkIn.value) checkOut.min = iso(new Date(Date.parse(`${checkIn.value}T00:00:00`) + 86400000));
-    if (!checkIn.value || !checkOut.value || checkOut.value <= checkIn.value) { quote.textContent = "Choose your dates to see the total."; return null; }
+    if (!checkIn.value || !checkOut.value || checkOut.value <= checkIn.value) { quote.classList.remove("bad"); quote.textContent = "Choose your dates to see the total."; return null; }
     const nights = nightsBetween(checkIn.value, checkOut.value);
     if (clash(checkIn.value, checkOut.value)) { quote.textContent = "Sorry, those dates are not available."; quote.classList.add("bad"); return null; }
     quote.classList.remove("bad");
@@ -126,7 +166,6 @@ async function openBooking(id) {
     return nights;
   };
   form.addEventListener("input", update);
-  $("#cancel").addEventListener("click", () => { booking.hidden = true; booking.innerHTML = ""; });
   form.addEventListener("submit", async (event) => {
     event.preventDefault();
     error.hidden = true;
@@ -135,7 +174,7 @@ async function openBooking(id) {
     const values = Object.fromEntries(new FormData(form).entries());
     const button = $("#submit");
     button.disabled = true;
-    const { data, error: rpcError } = await supabase.rpc("site_book", {
+    const { data: result, error: rpcError } = await supabase.rpc("site_book", {
       p_slug: slug, p_property: id, p_guest: values.guest, p_email: values.email, p_phone: values.phone,
       p_check_in: values.checkIn, p_check_out: values.checkOut, p_guests: Number(values.guests), p_notes: values.notes
     });
@@ -145,14 +184,23 @@ async function openBooking(id) {
       button.disabled = false;
       return;
     }
-    booking.innerHTML = `<div class="form done"><h2>Request sent ✓</h2><p>Thanks, ${escapeHtml(values.guest)}! ${escapeHtml(site.brand_name)} will confirm your ${data.nights}-night stay at ${escapeHtml(property.name)} (${money(data.total)}) by email.</p></div>`;
+    body.innerHTML = `<div class="done"><h2>Request sent ✓</h2><p>Thanks, ${escapeHtml(values.guest)}! ${escapeHtml(site.brand_name)} will confirm your ${result.nights}-night stay at ${escapeHtml(property.name)} (${money(result.total)}) by email.</p><button class="btn dark" type="button" id="done-close">Back to stays</button></div>`;
+    $("#done-close").addEventListener("click", () => dialog.close());
   });
   update();
 }
 
 grid.addEventListener("click", (event) => {
-  const button = event.target.closest("[data-book]");
-  if (button) void openBooking(button.dataset.book);
+  const target = event.target.closest("[data-book]");
+  if (target) void openBooking(target.dataset.book);
 });
+grid.addEventListener("keydown", (event) => {
+  const target = event.target.closest("[data-book]");
+  if (target && (event.key === "Enter" || event.key === " ") && event.target === target) { event.preventDefault(); void openBooking(target.dataset.book); }
+});
+$("#search").addEventListener("submit", (event) => { event.preventDefault(); renderList(); $("#stays").scrollIntoView(); });
+["#q", "#beds", "#sort"].forEach((selector) => $(selector).addEventListener("input", () => site && renderList()));
+$("#listing-close").addEventListener("click", () => dialog.close());
+dialog.addEventListener("click", (event) => { if (event.target === dialog) dialog.close(); });
 
 void init();
