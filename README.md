@@ -108,3 +108,6 @@ The landing page (`index.html`) embeds a live sample booking site (`/book.html?d
 
 ## Subscriptions
 Run `supabase/steps/8-subscriptions.sql`. Each signup gets a `pending` row in `subscriptions`; the customer's chosen plan is saved via `choose_plan()`. After a bank transfer, open Table Editor > `subscriptions` and set `status` = `active` and `paid_until`. Property limits per plan are enforced by a database trigger, and the app shows a plan card in Settings plus renewal banners.
+
+## SEO
+The landing page has title, description, canonical, Open Graph/Twitter cards (`public/og-image.png`), JSON-LD (Organization, SoftwareApplication, FAQ), `robots.txt` and `sitemap.xml`. App, thank-you and booking pages are `noindex`. If you add a custom domain, replace `https://ja-air-b-and-d.vercel.app` in `index.html`, `robots.txt` and `sitemap.xml`.

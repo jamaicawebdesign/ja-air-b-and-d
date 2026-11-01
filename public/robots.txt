@@ -1,0 +1,7 @@
+User-agent: *
+Allow: /
+Disallow: /app.html
+Disallow: /thank-you.html
+Disallow: /book.html
+
+Sitemap: https://ja-air-b-and-d.vercel.app/sitemap.xml
