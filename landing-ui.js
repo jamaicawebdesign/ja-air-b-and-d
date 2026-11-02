@@ -8,4 +8,3 @@ function update() {
 }
 range.addEventListener("input", update);
 update();
-document.querySelector("#year").textContent = new Date().getFullYear();
