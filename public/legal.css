@@ -1,0 +1,10 @@
+body { background: #f2f5f3; }
+.doc { max-width: 820px; margin: 0 auto; padding: 48px 20px 72px; color: #1d2a22; line-height: 1.65; }
+.doc h1 { font-size: 40px; margin: 0 0 8px; color: #000; }
+.doc h2 { margin-top: 32px; color: #000; }
+.doc .meta { color: #55645b; font-size: 14px; }
+.doc a { color: #0d6b34; font-weight: 600; }
+.doc .card { background: #fff; border: 2px solid #000; border-radius: 14px; padding: 20px; margin: 14px 0; }
+.doc .card h3 { margin: 0 0 6px; }
+.doc .btn { text-decoration: none; display: inline-block; margin-top: 8px; }
+.doc .btn-wa { color: #052e16; }
