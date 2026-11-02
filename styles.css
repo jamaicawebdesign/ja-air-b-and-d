@@ -649,6 +649,12 @@ td { border-color: #dfe7e2; font-size: 13px; color: #1d2a23; }
 .bubble-in { background: #e3e9e5; }
 .bubble-meta { color: #4b5a51; }
 .cal-cell { background: #dde5e0; }
+.cal-cell.src-direct { background: #27785e; }
+.cal-cell.src-airbnb { background: #ff5a5f; }
+.cal-cell.src-vrbo { background: #3b6fd8; }
+.cal-cell.src-booking { background: #003580; }
+.cal-cell.src-other { background: #8a79c9; }
+.cal-cell.conflict { background: repeating-linear-gradient(45deg, #c0392b, #c0392b 4px, #f4b400 4px, #f4b400 8px); }
 .cal-day { color: #3d4d43; }
 .site-form { padding: 0 18px 18px; } .site-actions { margin-top: 16px; }
 
@@ -746,3 +752,6 @@ td { border-color: #dfe7e2; font-size: 13px; color: #1d2a23; }
 .plan-pill.active { background: #d9f2e3; }
 .plan-pill.expired { background: #fde2e0; }
 .plan-usage { color: #000; }
+.guest-cell > span:last-child { display: flex; flex-direction: column; gap: 2px; }
+.guest-name { display: block; font-size: 14px; }
+.guest-property { display: block; margin-top: 0; font-size: 12px; }
