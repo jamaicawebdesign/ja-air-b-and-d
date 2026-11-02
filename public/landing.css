@@ -187,3 +187,8 @@ details p { margin: 10px 0 0; color: var(--muted); }
 .show-text li::before { content: "✓"; position: absolute; left: 0; color: var(--gold); font-weight: 800; }
 .show-cta { text-align: center; margin: 56px 0 0; display: flex; gap: 12px; justify-content: center; flex-wrap: wrap; }
 @media (max-width: 900px) { .show-row, .show-row.flip { grid-template-columns: 1fr; gap: 18px; } .show-row.flip .show-img { order: 0; } .showcase { gap: 44px; } .show-text h3 { font-size: 24px; } }
+
+.caribbean { background: linear-gradient(180deg, #f1f7f3, #e6f0e9); border-top: 4px solid var(--gold); }
+.caribbean .feature { border-top-color: var(--green); }
+.caribbean .feature:nth-child(3n+2) { border-top-color: var(--gold); }
+.caribbean .ico { background: #111; color: var(--gold); font-size: 18px; }
