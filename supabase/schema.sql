@@ -301,7 +301,7 @@ create table if not exists public.expenses (
   id uuid primary key default gen_random_uuid(),
   user_id uuid not null default auth.uid() references auth.users (id) on delete cascade,
   property_id uuid not null,
-  category text not null default 'other' check (category in ('cleaning', 'maintenance', 'utilities', 'supplies', 'marketing', 'taxes', 'other')),
+  category text not null default 'other' check (category in ('cleaning', 'maintenance', 'platform_commission', 'utilities', 'supplies', 'marketing', 'taxes', 'other')),
   description text not null default '',
   amount numeric(12, 2) not null check (amount >= 0),
   expense_date date not null,
@@ -546,6 +546,11 @@ alter table public.properties add column if not exists cleaning_fee numeric(12, 
 -- null means "use the owner's default management fee"
 alter table public.properties add column if not exists commission_pct numeric(5, 2) check (commission_pct between 0 and 100);
 alter table public.properties add column if not exists cleaner_ids uuid[] not null default '{}';
+
+-- Explicitly logged platform commissions in monthly financial reports
+alter table public.expenses drop constraint if exists expenses_category_check;
+alter table public.expenses add constraint expenses_category_check
+  check (category in ('cleaning', 'maintenance', 'platform_commission', 'utilities', 'supplies', 'marketing', 'taxes', 'other'));
 
 -- Property status: active, inactive, maintenance or archived. Safe to run more than once.
 alter table public.properties add column if not exists status text not null default 'active'

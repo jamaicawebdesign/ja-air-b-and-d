@@ -1,4 +1,4 @@
-export const CATEGORIES = { cleaning: "Cleaning", maintenance: "Maintenance", utilities: "Utilities", supplies: "Supplies", marketing: "Marketing", taxes: "Taxes", other: "Other" };
+export const CATEGORIES = { cleaning: "Cleaning", maintenance: "Maintenance", platform_commission: "Platform commissions", utilities: "Utilities", supplies: "Supplies", marketing: "Marketing", taxes: "Taxes", other: "Other" };
 
 const day = 86400000;
 const toMs = (iso) => Date.parse(`${iso}T00:00:00Z`);
@@ -38,6 +38,9 @@ export function propertyStats({ property, reservations, expenses, start, end }) 
   for (const entry of own) byCategory[entry.category] = (byCategory[entry.category] || 0) + entry.amount;
   return {
     nights: Math.min(nights, available), available, bookings, revenue, expenses: spent, byCategory,
+    cleaningExpenses: byCategory.cleaning || 0,
+    maintenanceExpenses: byCategory.maintenance || 0,
+    platformCommissions: byCategory.platform_commission || 0,
     occupancy: available ? Math.min(100, Math.round((nights / available) * 100)) : 0,
     adr: nights ? revenue / nights : 0,
     revpar: available ? revenue / available : 0
@@ -47,8 +50,11 @@ export function propertyStats({ property, reservations, expenses, start, end }) 
 export function sumStats(list) {
   const total = list.reduce((acc, s) => ({
     nights: acc.nights + s.nights, available: acc.available + s.available, bookings: acc.bookings + s.bookings,
-    revenue: acc.revenue + s.revenue, expenses: acc.expenses + s.expenses
-  }), { nights: 0, available: 0, bookings: 0, revenue: 0, expenses: 0 });
+    revenue: acc.revenue + s.revenue, expenses: acc.expenses + s.expenses,
+    cleaningExpenses: acc.cleaningExpenses + s.cleaningExpenses,
+    maintenanceExpenses: acc.maintenanceExpenses + s.maintenanceExpenses,
+    platformCommissions: acc.platformCommissions + s.platformCommissions
+  }), { nights: 0, available: 0, bookings: 0, revenue: 0, expenses: 0, cleaningExpenses: 0, maintenanceExpenses: 0, platformCommissions: 0 });
   return {
     ...total,
     occupancy: total.available ? Math.min(100, Math.round((total.nights / total.available) * 100)) : 0,
@@ -70,21 +76,27 @@ export function ownerPayoutRows(rows, defaultPct, expenses) {
 }
 
 export function statementHtml({ owner, period, rows, totals, payout, fmt, esc, generated, feeLabel = `${owner.feePct}%` }) {
-  const lines = rows.map((row) => `<tr><td>${esc(row.name)}</td><td>${row.stats.bookings}</td><td>${row.stats.occupancy}%</td><td>${fmt(row.stats.adr)}</td><td>${fmt(row.stats.revenue)}</td><td>${fmt(row.stats.expenses)}</td></tr>`).join("");
+  const lines = rows.map((row) => `<tr><td>${esc(row.name)}</td><td>${row.stats.bookings}</td><td>${row.stats.occupancy}%</td><td>${fmt(row.stats.adr)}</td><td>${fmt(row.stats.revenue)}</td><td>${fmt(row.stats.cleaningExpenses)}</td><td>${fmt(row.stats.maintenanceExpenses)}</td><td>${fmt(row.stats.platformCommissions)}</td><td>${fmt(row.stats.expenses)}</td></tr>`).join("");
   const expenseLines = rows.flatMap((row) => Object.entries(row.stats.byCategory).map(([category, amount]) => `<tr><td>${esc(row.name)}</td><td>${esc(CATEGORIES[category] || category)}</td><td>${fmt(amount)}</td></tr>`)).join("");
+  const otherExpenses = totals.expenses - totals.cleaningExpenses - totals.maintenanceExpenses - totals.platformCommissions;
   return `<!doctype html><html><head><meta charset="utf-8"><title>Owner statement – ${esc(owner.name)} – ${esc(period)}</title>
-<style>body{font:14px/1.5 "Segoe UI",sans-serif;color:#111;max-width:760px;margin:30px auto;padding:0 20px}h1{margin:0}h2{margin:26px 0 8px;font-size:15px}
+<style>body{font:14px/1.5 "Segoe UI",sans-serif;color:#111;max-width:1100px;margin:30px auto;padding:0 20px}h1{margin:0}h2{margin:26px 0 8px;font-size:15px}
 .bar{height:6px;background:linear-gradient(90deg,#009b3a 33%,#fed100 33% 66%,#000 66%);margin:10px 0 18px}table{width:100%;border-collapse:collapse}
 th,td{padding:7px 8px;border-bottom:1px solid #ddd;text-align:left}th{background:#f0f3f1;font-size:12px}.sum td:last-child,.sum th:last-child{text-align:right}
 .net{font-size:18px;font-weight:700;background:#fff6c2}button{margin-top:20px;padding:9px 16px;font:inherit}@media print{button{display:none}}</style></head><body>
 <h1>Owner statement</h1><div class="bar"></div>
 <p><strong>${esc(owner.name)}</strong>${owner.email ? `<br>${esc(owner.email)}` : ""}<br>Period: ${esc(period)}<br>Generated ${esc(generated)}</p>
-<h2>Property performance</h2><table><thead><tr><th>Property</th><th>Bookings</th><th>Occupancy</th><th>ADR</th><th>Revenue</th><th>Expenses</th></tr></thead><tbody>${lines}</tbody></table>
+<h2>Property performance</h2><table><thead><tr><th>Property</th><th>Bookings</th><th>Occupancy</th><th>ADR</th><th>Gross revenue</th><th>Cleaning</th><th>Maintenance</th><th>Platform commissions</th><th>Total expenses</th></tr></thead><tbody>${lines}</tbody></table>
 ${expenseLines ? `<h2>Expenses by category</h2><table><thead><tr><th>Property</th><th>Category</th><th>Amount</th></tr></thead><tbody>${expenseLines}</tbody></table>` : ""}
 <h2>Summary</h2><table class="sum"><tbody>
-<tr><td>Gross revenue</td><td>${fmt(totals.revenue)}</td></tr>
+<tr><td>Gross booking revenue</td><td>${fmt(totals.revenue)}</td></tr>
+<tr><td>Occupancy rate</td><td>${totals.occupancy}%</td></tr>
+<tr><td>Average daily rate (ADR)</td><td>${fmt(totals.adr)}</td></tr>
+<tr><td>Cleaning expenses</td><td>− ${fmt(totals.cleaningExpenses)}</td></tr>
+<tr><td>Maintenance expenses</td><td>− ${fmt(totals.maintenanceExpenses)}</td></tr>
+<tr><td>Platform commissions</td><td>− ${fmt(totals.platformCommissions)}</td></tr>
 <tr><td>Management fee${feeLabel ? ` (${feeLabel})` : ""}</td><td>− ${fmt(payout.fee)}</td></tr>
-<tr><td>Expenses</td><td>− ${fmt(totals.expenses)}</td></tr>
+${otherExpenses ? `<tr><td>Other expenses</td><td>− ${fmt(otherExpenses)}</td></tr>` : ""}
 <tr class="net"><td>Net payout to owner</td><td>${fmt(payout.net)}</td></tr></tbody></table>
 <button onclick="window.print()">Print / save as PDF</button></body></html>`;
 }
