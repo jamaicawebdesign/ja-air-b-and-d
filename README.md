@@ -115,3 +115,7 @@ The landing page has title, description, canonical, Open Graph/Twitter cards (`p
 ## Property profiles
 
 Run `supabase/steps/9-property-profile.sql`. Each property gets a profile page (Properties > View profile) with address, photos, bedrooms/bathrooms, max guests, check-in/out times, nightly rate, cleaning fee, owner, commission, assigned cleaners and connected channels. A property commission overrides the owner default in reports and statements; assigned cleaners get that property's turnover tasks first. Until the SQL is run, saving a property still works but only stores the basic fields.
+
+### Property status
+
+Run `supabase/steps/10-property-status.sql`. Each property is Active, Inactive, Maintenance or Archived (set in the property form, shown as a badge on cards and the profile). Only Active properties can be listed on the booking website (a database trigger enforces this). Archived properties are hidden from the list by default (use the status filter), the calendar and new reservation/channel forms, but their history stays in reports.

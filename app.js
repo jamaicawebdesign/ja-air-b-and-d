@@ -60,9 +60,10 @@ function mapProperty(row) {
     rate: Number(row.rate),
     description: row.description || "",
     ownerId: row.owner_id || null,
-    listed: Boolean(row.listed),
+    listed: Boolean(row.listed) && (row.status || "active") === "active",
     photos: Array.isArray(row.photos) ? row.photos : [],
     amenities: Array.isArray(row.amenities) ? row.amenities : [],
+    status: PROPERTY_STATUSES[row.status] ? row.status : "active",
     address: row.address || "",
     bathrooms: row.bathrooms == null ? 1 : Number(row.bathrooms),
     maxGuests: row.max_guests || 2,
@@ -831,7 +832,7 @@ function renderCalendarGrid() {
   });
   const { ids } = findConflicts(data.reservations);
   const header = dates.map((date) => `<span class="cal-day ${parseDate(date).getDate() === 1 ? "cal-first" : ""}" title="${date}">${parseDate(date).getDate()}</span>`).join("");
-  const rows = data.properties.map((property) => {
+  const rows = data.properties.filter((property) => property.status !== "archived").map((property) => {
     const cells = dates.map((date) => {
       const hits = data.reservations.filter((entry) => entry.propertyId === property.id && entry.status !== "cancelled" && entry.checkIn <= date && date < entry.checkOut);
       if (!hits.length) return `<span class="cal-cell"></span>`;
@@ -1396,8 +1397,8 @@ function renderWebsite() {
   const listedCount = data.properties.filter((property) => property.listed).length;
   const slugGuess = (displayName() || "my-stays").toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 30) || "my-stays";
   const propertyRows = data.properties.map((property) => `<tr><td><strong>${escapeHtml(property.name)}</strong><span class="guest-property">${escapeHtml(property.location)} · ${money(property.rate)} / night</span></td>
-    <td><span class="status status-${property.listed ? "confirmed" : "cancelled"}">${property.listed ? "On website" : "Hidden"}</span></td>
-    <td><button class="small-button" data-action="toggle-listed" data-id="${escapeHtml(property.id)}" ${site ? "" : "disabled"}>${property.listed ? "Hide" : "Show on website"}</button></td></tr>`).join("");
+    <td><span class="status status-${property.listed ? "confirmed" : "cancelled"}">${property.listed ? "On website" : isBookable(property) ? "Hidden" : PROPERTY_STATUSES[property.status]}</span></td>
+    <td><button class="small-button" data-action="toggle-listed" data-id="${escapeHtml(property.id)}" ${site && isBookable(property) ? "" : "disabled"} ${isBookable(property) ? "" : `title="Only active properties can be listed"`}>${property.listed ? "Hide" : "Show on website"}</button></td></tr>`).join("");
   viewRoot.innerHTML = `
     <div class="stats-grid">
       ${statCard("Website", site?.enabled ? "Live" : site ? "Paused" : "Not set up", site ? escapeHtml(site.slug) : "Create your site below", "◎")}
@@ -1445,6 +1446,12 @@ async function saveSite(event) {
   showToast("Website saved.");
 }
 
+const PROPERTY_STATUSES = { active: "Active", inactive: "Inactive", maintenance: "Maintenance", archived: "Archived" };
+const STATUS_CLASS = { active: "confirmed", inactive: "cancelled", maintenance: "pending", archived: "cancelled" };
+let propertyStatusFilter = "current";
+const isBookable = (property) => property.status === "active";
+const statusBadge = (property) => `<span class="status status-${STATUS_CLASS[property.status]}">${PROPERTY_STATUSES[property.status]}</span>`;
+
 let profileId = null;
 
 function formatTime(value) {
@@ -1471,7 +1478,7 @@ function renderPropertyProfile(property) {
       <div class="property-actions"><button class="small-button" data-action="edit-property" data-id="${escapeHtml(property.id)}">Edit profile</button><button class="small-button danger" data-action="delete-property" data-id="${escapeHtml(property.id)}">Remove</button></div></div>
     <section class="panel profile-hero">
       ${photos}
-      <div class="profile-head"><h2>${escapeHtml(property.name)}</h2>
+      <div class="profile-head"><h2>${escapeHtml(property.name)} ${statusBadge(property)}</h2>
         <p class="property-location">${escapeHtml([property.address, property.location].filter(Boolean).join(", "))}</p>
         ${property.description ? `<p class="profile-desc">${escapeHtml(property.description)}</p>` : ""}
         ${property.amenities.length ? `<div class="chip-row">${property.amenities.map((entry) => `<span class="chip">${escapeHtml(entry)}</span>`).join("")}</div>` : ""}</div>
@@ -1504,11 +1511,13 @@ function renderProperties() {
   if (profile) { renderPropertyProfile(profile); return; }
   profileId = null;
   const query = (document.querySelector("#property-search")?.value || "").trim().toLowerCase();
-  const filtered = data.properties.filter((property) => `${property.name} ${property.location}`.toLowerCase().includes(query));
+  const filtered = data.properties.filter((property) => `${property.name} ${property.location}`.toLowerCase().includes(query)
+    && (propertyStatusFilter === "all" || (propertyStatusFilter === "current" ? property.status !== "archived" : property.status === propertyStatusFilter)));
+  const archivedCount = data.properties.filter((property) => property.status === "archived").length;
   viewRoot.innerHTML = `
     <div class="toolbar">
       <span class="toolbar-title">${filtered.length} ${filtered.length === 1 ? "property" : "properties"} in your portfolio</span>
-      <div class="toolbar-filters"><input id="property-search" class="search-input" type="search" placeholder="Search properties" value="${escapeHtml(query)}" aria-label="Search properties"></div>
+      <div class="toolbar-filters"><select id="property-status-filter" class="filter-select" aria-label="Filter by status"><option value="current" ${propertyStatusFilter === "current" ? "selected" : ""}>All except archived</option>${Object.entries(PROPERTY_STATUSES).map(([key, label]) => `<option value="${key}" ${propertyStatusFilter === key ? "selected" : ""}>${label}${key === "archived" ? ` (${archivedCount})` : ""}</option>`).join("")}<option value="all" ${propertyStatusFilter === "all" ? "selected" : ""}>Everything</option></select><input id="property-search" class="search-input" type="search" placeholder="Search properties" value="${escapeHtml(query)}" aria-label="Search properties"></div>
     </div>
     ${filtered.length ? `<div class="property-grid">${filtered.map((property, index) => {
       const today = localDate(new Date());
@@ -1516,7 +1525,7 @@ function renderProperties() {
       return `<article class="property-card">
         <div class="property-art art-${index % 3}"${property.photos[0] ? ` style="background-image:url('${escapeHtml(property.photos[0])}')"` : ""}><span class="property-art-label">${Number(property.bedrooms) || 1} ${Number(property.bedrooms) === 1 ? "bedroom" : "bedrooms"}</span></div>
         <div class="property-content">
-          <div class="property-title-row"><h3>${escapeHtml(property.name)}</h3><span class="status status-confirmed">Active</span></div>
+          <div class="property-title-row"><h3>${escapeHtml(property.name)}</h3>${statusBadge(property)}</div>
           <p class="property-location">${escapeHtml(property.location)}</p>
           <div class="property-meta"><span>Nightly rate</span><strong>${money(property.rate)}</strong></div>
           <div class="property-meta"><span>Upcoming stays</span><strong>${bookings}</strong></div>
@@ -1545,7 +1554,7 @@ function field(name, label, type, value = "", options = {}) {
 }
 
 const MAX_PHOTOS = 6;
-const PROFILE_COLUMNS = ["address", "bathrooms", "max_guests", "check_in_time", "check_out_time", "cleaning_fee", "commission_pct", "cleaner_ids"];
+const PROFILE_COLUMNS = ["status", "address", "bathrooms", "max_guests", "check_in_time", "check_out_time", "cleaning_fee", "commission_pct", "cleaner_ids"];
 let editorPhotos = [];
 
 function renderPhotoManager() {
@@ -1584,6 +1593,7 @@ function openEditor(type, item = null) {
     formFields.innerHTML = [
       field("name", "Property name", "text", item?.name, { full: true, placeholder: "e.g. Seaside cottage" }),
       field("location", "Location", "text", item?.location, { full: true, placeholder: "City, country" }),
+      field("status", "Status", "select", item?.status || "active", { full: true, choices: Object.entries(PROPERTY_STATUSES) }),
       field("address", "Street address", "text", item?.address, { full: true, required: false, placeholder: "e.g. 12 Beach Road, Negril" }),
       field("bedrooms", "Bedrooms", "number", item?.bedrooms ?? 1, { min: 1, step: 1 }),
       field("bathrooms", "Bathrooms", "number", item?.bathrooms ?? 1, { min: 0, step: "0.5" }),
@@ -1648,7 +1658,7 @@ function openEditor(type, item = null) {
       field("body", "Message", "textarea", item?.body, { full: true, placeholder: "Hi {guest}, …" })
     ].join("");
   } else if (type === "channel") {
-    const choices = data.properties.map((property) => [property.id, property.name]);
+    const choices = data.properties.filter((property) => property.status !== "archived" || property.id === item?.propertyId).map((property) => [property.id, property.name]);
     formFields.innerHTML = [
       field("propertyId", "Property", "select", item?.propertyId || choices[0][0], { choices }),
       field("platform", "Channel", "select", item?.platform || "airbnb", { choices: Object.entries(PLATFORMS) }),
@@ -1656,7 +1666,7 @@ function openEditor(type, item = null) {
       field("priceAdjust", "Price adjustment on this channel (%)", "number", item?.priceAdjust ?? 0, { min: -90, step: "0.1" })
     ].join("");
   } else {
-    const choices = data.properties.map((property) => [property.id, property.name]);
+    const choices = data.properties.filter((property) => property.status !== "archived" || property.id === item?.propertyId).map((property) => [property.id, property.name]);
     formFields.innerHTML = [
       field("guest", "Guest name", "text", item?.guest, { placeholder: "Full name" }),
       field("email", "Email address", "email", item?.email, { placeholder: "guest@example.com" }),
@@ -1711,6 +1721,7 @@ async function saveEditor(event) {
     rate: Number(values.rate),
     description: values.description.trim(),
     owner_id: values.ownerId || null,
+    status: values.status || "active",
     address: values.address.trim(),
     bathrooms: Number(values.bathrooms) || 0,
     max_guests: Number(values.maxGuests) || 1,
@@ -2071,6 +2082,7 @@ viewRoot.addEventListener("submit", (event) => {
 viewRoot.addEventListener("change", (event) => {
   const target = event.target;
   if (target.id === "report-month" && target.value) { reportMonth = target.value; render(); }
+  if (target.id === "property-status-filter") { propertyStatusFilter = target.value; render(); }
   if (target.id === "report-owner") { reportOwner = target.value; render(); }
   if (target.id === "task-filter") { viewRoot.dataset.taskFilter = target.value; render(); }
   if (target.dataset.taskAssign !== undefined) void updateTask(target.dataset.taskAssign, {}, { staff_id: target.value || null });
