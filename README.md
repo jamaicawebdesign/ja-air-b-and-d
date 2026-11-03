@@ -111,3 +111,7 @@ Run `supabase/steps/8-subscriptions.sql`. Each signup gets a `pending` row in `s
 
 ## SEO
 The landing page has title, description, canonical, Open Graph/Twitter cards (`public/og-image.png`), JSON-LD (Organization, SoftwareApplication, FAQ), `robots.txt` and `sitemap.xml`. App, thank-you and booking pages are `noindex`. If you add a custom domain, replace `https://ja-air-b-and-d.vercel.app` in `index.html`, `robots.txt` and `sitemap.xml`.
+
+## Property profiles
+
+Run `supabase/steps/9-property-profile.sql`. Each property gets a profile page (Properties > View profile) with address, photos, bedrooms/bathrooms, max guests, check-in/out times, nightly rate, cleaning fee, owner, commission, assigned cleaners and connected channels. A property commission overrides the owner default in reports and statements; assigned cleaners get that property's turnover tasks first. Until the SQL is run, saving a property still works but only stores the basic fields.

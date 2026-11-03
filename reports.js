@@ -62,7 +62,14 @@ export function ownerPayout(revenue, expenses, feePct) {
   return { fee, net: revenue - fee - expenses };
 }
 
-export function statementHtml({ owner, period, rows, totals, payout, fmt, esc, generated }) {
+// Each property can override the owner's default commission (commissionPct = null means use the default).
+export function ownerPayoutRows(rows, defaultPct, expenses) {
+  const fee = rows.reduce((sum, row) => sum + row.stats.revenue * ((row.commissionPct ?? defaultPct) / 100), 0);
+  const revenue = rows.reduce((sum, row) => sum + row.stats.revenue, 0);
+  return { fee, net: revenue - fee - expenses };
+}
+
+export function statementHtml({ owner, period, rows, totals, payout, fmt, esc, generated, feeLabel = `${owner.feePct}%` }) {
   const lines = rows.map((row) => `<tr><td>${esc(row.name)}</td><td>${row.stats.bookings}</td><td>${row.stats.occupancy}%</td><td>${fmt(row.stats.adr)}</td><td>${fmt(row.stats.revenue)}</td><td>${fmt(row.stats.expenses)}</td></tr>`).join("");
   const expenseLines = rows.flatMap((row) => Object.entries(row.stats.byCategory).map(([category, amount]) => `<tr><td>${esc(row.name)}</td><td>${esc(CATEGORIES[category] || category)}</td><td>${fmt(amount)}</td></tr>`)).join("");
   return `<!doctype html><html><head><meta charset="utf-8"><title>Owner statement – ${esc(owner.name)} – ${esc(period)}</title>
@@ -76,7 +83,7 @@ th,td{padding:7px 8px;border-bottom:1px solid #ddd;text-align:left}th{background
 ${expenseLines ? `<h2>Expenses by category</h2><table><thead><tr><th>Property</th><th>Category</th><th>Amount</th></tr></thead><tbody>${expenseLines}</tbody></table>` : ""}
 <h2>Summary</h2><table class="sum"><tbody>
 <tr><td>Gross revenue</td><td>${fmt(totals.revenue)}</td></tr>
-<tr><td>Management fee (${owner.feePct}%)</td><td>− ${fmt(payout.fee)}</td></tr>
+<tr><td>Management fee${feeLabel ? ` (${feeLabel})` : ""}</td><td>− ${fmt(payout.fee)}</td></tr>
 <tr><td>Expenses</td><td>− ${fmt(totals.expenses)}</td></tr>
 <tr class="net"><td>Net payout to owner</td><td>${fmt(payout.net)}</td></tr></tbody></table>
 <button onclick="window.print()">Print / save as PDF</button></body></html>`;
