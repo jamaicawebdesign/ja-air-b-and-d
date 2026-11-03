@@ -18,7 +18,7 @@ export function overlapNights(reservation, start, end) {
   return Math.max(0, Math.round((to - from) / day));
 }
 
-export function propertyStats({ property, reservations, expenses, start, end }) {
+export function propertyStats({ property, reservations, expenses, payments = [], start, end }) {
   const available = (toMs(end) - toMs(start)) / day;
   let nights = 0;
   let revenue = 0;
@@ -32,12 +32,15 @@ export function propertyStats({ property, reservations, expenses, start, end }) 
     revenue += (Number(reservation.amount) || 0) * (inRange / total);
     bookings += 1;
   }
+  // Cash view: money that actually arrived this period, and balances still unpaid on stays that began by the period's end
+  const received = payments.filter((entry) => entry.propertyId === property.id && entry.date >= start && entry.date < end).reduce((sum, entry) => sum + entry.amount, 0);
+  const outstanding = reservations.filter((entry) => entry.propertyId === property.id && entry.status !== "cancelled" && entry.checkIn < end).reduce((sum, entry) => sum + (entry.outstanding || 0), 0);
   const own = expenses.filter((entry) => entry.propertyId === property.id && entry.date >= start && entry.date < end);
   const spent = own.reduce((sum, entry) => sum + entry.amount, 0);
   const byCategory = {};
   for (const entry of own) byCategory[entry.category] = (byCategory[entry.category] || 0) + entry.amount;
   return {
-    nights: Math.min(nights, available), available, bookings, revenue, expenses: spent, byCategory,
+    nights: Math.min(nights, available), available, bookings, revenue, received, outstanding, expenses: spent, byCategory,
     cleaningExpenses: byCategory.cleaning || 0,
     maintenanceExpenses: byCategory.maintenance || 0,
     platformCommissions: byCategory.platform_commission || 0,
@@ -50,11 +53,11 @@ export function propertyStats({ property, reservations, expenses, start, end }) 
 export function sumStats(list) {
   const total = list.reduce((acc, s) => ({
     nights: acc.nights + s.nights, available: acc.available + s.available, bookings: acc.bookings + s.bookings,
-    revenue: acc.revenue + s.revenue, expenses: acc.expenses + s.expenses,
+    revenue: acc.revenue + s.revenue, received: acc.received + s.received, outstanding: acc.outstanding + s.outstanding, expenses: acc.expenses + s.expenses,
     cleaningExpenses: acc.cleaningExpenses + s.cleaningExpenses,
     maintenanceExpenses: acc.maintenanceExpenses + s.maintenanceExpenses,
     platformCommissions: acc.platformCommissions + s.platformCommissions
-  }), { nights: 0, available: 0, bookings: 0, revenue: 0, expenses: 0, cleaningExpenses: 0, maintenanceExpenses: 0, platformCommissions: 0 });
+  }), { nights: 0, available: 0, bookings: 0, revenue: 0, received: 0, outstanding: 0, expenses: 0, cleaningExpenses: 0, maintenanceExpenses: 0, platformCommissions: 0 });
   return {
     ...total,
     occupancy: total.available ? Math.min(100, Math.round((total.nights / total.available) * 100)) : 0,
@@ -75,7 +78,16 @@ export function ownerPayoutRows(rows, defaultPct, expenses) {
   return { fee, net: revenue - fee - expenses };
 }
 
-export function statementHtml({ owner, period, rows, totals, payout, fmt, esc, generated, feeLabel = `${owner.feePct}%` }) {
+// Cash basis: management fee is taken on money received, and payouts already made are deducted.
+export function ownerPayoutDue(rows, defaultPct, paidOut) {
+  const received = rows.reduce((sum, row) => sum + row.stats.received, 0);
+  const fee = rows.reduce((sum, row) => sum + row.stats.received * ((row.commissionPct ?? defaultPct) / 100), 0);
+  const expenses = rows.reduce((sum, row) => sum + row.stats.expenses, 0);
+  const net = received - fee - expenses;
+  return { received, fee, expenses, net, paidOut, due: net - paidOut };
+}
+
+export function statementHtml({ owner, period, rows, totals, payout, fmt, esc, generated, feeLabel = `${owner.feePct}%`, cash = null, payoutLines = [], note = "" }) {
   const lines = rows.map((row) => `<tr><td>${esc(row.name)}</td><td>${row.stats.bookings}</td><td>${row.stats.occupancy}%</td><td>${fmt(row.stats.adr)}</td><td>${fmt(row.stats.revenue)}</td><td>${fmt(row.stats.cleaningExpenses)}</td><td>${fmt(row.stats.maintenanceExpenses)}</td><td>${fmt(row.stats.platformCommissions)}</td><td>${fmt(row.stats.expenses)}</td></tr>`).join("");
   const expenseLines = rows.flatMap((row) => Object.entries(row.stats.byCategory).map(([category, amount]) => `<tr><td>${esc(row.name)}</td><td>${esc(CATEGORIES[category] || category)}</td><td>${fmt(amount)}</td></tr>`)).join("");
   const otherExpenses = totals.expenses - totals.cleaningExpenses - totals.maintenanceExpenses - totals.platformCommissions;
@@ -98,5 +110,16 @@ ${expenseLines ? `<h2>Expenses by category</h2><table><thead><tr><th>Property</t
 <tr><td>Management fee${feeLabel ? ` (${feeLabel})` : ""}</td><td>− ${fmt(payout.fee)}</td></tr>
 ${otherExpenses ? `<tr><td>Other expenses</td><td>− ${fmt(otherExpenses)}</td></tr>` : ""}
 <tr class="net"><td>Net payout to owner</td><td>${fmt(payout.net)}</td></tr></tbody></table>
+${cash ? `<h2>Cash position <small>(what has actually moved)</small></h2><table class="sum"><tbody>
+<tr><td>Booking revenue earned (stays this period)</td><td>${fmt(totals.revenue)}</td></tr>
+<tr><td>Money actually received (payments this period)</td><td>${fmt(cash.received)}</td></tr>
+<tr><td>Outstanding payments (unpaid balances)</td><td>${fmt(totals.outstanding)}</td></tr>
+<tr><td>Expenses incurred</td><td>− ${fmt(cash.expenses)}</td></tr>
+<tr><td>Management fee on money received</td><td>− ${fmt(cash.fee)}</td></tr>
+<tr><td>Net owed to owner from money received</td><td>${fmt(cash.net)}</td></tr>
+<tr><td>Payouts already made to owner</td><td>− ${fmt(cash.paidOut)}</td></tr>
+<tr class="net"><td>Owner payout due</td><td>${fmt(cash.due)}</td></tr></tbody></table>
+${payoutLines.length ? `<h2>Payouts made</h2><table><tbody>${payoutLines.map((line) => `<tr><td>${esc(line.date)}</td><td>${esc(line.detail)}</td><td>${esc(line.amount)}</td></tr>`).join("")}</tbody></table>` : ""}` : ""}
+${note ? `<p style="font-size:12px;color:#555">${esc(note)}</p>` : ""}
 <button onclick="window.print()">Print / save as PDF</button></body></html>`;
 }
