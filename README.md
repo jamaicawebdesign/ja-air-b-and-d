@@ -123,3 +123,11 @@ Run `supabase/steps/10-property-status.sql`. Each property is Active, Inactive, 
 ### Financial report breakdown
 
 Run `supabase/steps/11-financial-breakdown.sql` to add the Platform commissions expense category. Reports and owner statements show gross booking revenue, occupancy, ADR, cleaning and maintenance expenses, platform commissions, management fees and net payout. Platform commissions are entered as expenses; Havenstay does not assume a commission rate.
+
+## JMD / USD currencies, payments and payouts
+Run `supabase/steps/12-currency-and-cash.sql` once (after steps 1 and 5). It adds a `currency` (USD or JMD) and `exchange_rate` (J$ per US$1 on the day) to reservations and expenses, plus `payments` and `payouts` tables.
+
+- **Currencies:** every reservation, payment, expense and payout keeps its own currency and rate. Where no rate was recorded, the default rate in Settings is used. The header currency switch is the *reporting* currency; reports convert each transaction at its own recorded rate. Property nightly rates and cleaning fees are in US$.
+- **Five separate figures** on the Reports page: booking revenue (earned by nights stayed), money received (payments dated in the month), outstanding (unpaid balances on stays that began by month end), expenses incurred, and owner payouts due (money received − management fee − expenses − payouts already made, calculated per month).
+- Record money against a reservation with **+ Payment** on the Reservations page, and transfers to owners with **+ Record payout** on Reports. Owner statements include the same cash position.
+- Until step 12 is run, the app still works and saves without currency data.

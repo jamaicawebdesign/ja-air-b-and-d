@@ -5,7 +5,8 @@ import { SUPABASE_KEY, SUPABASE_URL } from "./supabase-config.js";
 import { PLANS, subscriptionState } from "./plans.js";
 import { PLATFORMS, findConflicts, parseIcal } from "./ical.js";
 import { COLORS, barChart, donutChart, lineChart, rankBars } from "./charts.js";
-import { CATEGORIES, monthRange, ownerPayoutRows, propertyStats, statementHtml, sumStats } from "./reports.js";
+import { CATEGORIES, monthRange, ownerPayoutDue, ownerPayoutRows, propertyStats, statementHtml, sumStats } from "./reports.js";
+import { CURRENCIES, DEFAULT_RATE, convert, formatMoney } from "./currency.js";
 import { KINDS, ROLES, STATUSES, isOverdue, notifyLink, pickCleaner, smsLink, turnoversToCreate } from "./ops.js";
 import { CHANNELS, STARTER_TEMPLATES, TRIGGERS, deliveryLink, dueMessages, fillTemplate, matchAutoReply } from "./inbox.js";
 
@@ -42,7 +43,8 @@ function localDate(date) {
 }
 
 let subscription = null;
-let data = { properties: [], reservations: [], channels: [], conversations: [], messages: [], templates: [], staff: [], tasks: [], owners: [], expenses: [], site: null };
+let data = { properties: [], reservations: [], channels: [], conversations: [], messages: [], templates: [], staff: [], tasks: [], owners: [], expenses: [], payments: [], payouts: [], site: null };
+let cashMissing = false;
 let reportMonth = "";
 let reportOwner = "all";
 let opsRunning = false;
@@ -86,6 +88,8 @@ function mapReservation(row) {
     checkOut: row.check_out,
     guests: row.guests,
     amount: Number(row.amount),
+    currency: CURRENCIES[row.currency] ? row.currency : "USD",
+    rate: row.exchange_rate > 0 ? Number(row.exchange_rate) : null,
     status: row.status,
     notes: row.notes || "",
     source: row.source || "direct",
@@ -132,7 +136,15 @@ function mapOwner(row) {
 }
 
 function mapExpense(row) {
-  return { id: row.id, propertyId: row.property_id, category: row.category, description: row.description || "", amount: Number(row.amount), date: row.expense_date };
+  return { id: row.id, propertyId: row.property_id, category: row.category, description: row.description || "", amount: Number(row.amount), date: row.expense_date, currency: CURRENCIES[row.currency] ? row.currency : "USD", rate: row.exchange_rate > 0 ? Number(row.exchange_rate) : null };
+}
+
+function mapPayment(row) {
+  return { id: row.id, reservationId: row.reservation_id, amount: Number(row.amount), currency: CURRENCIES[row.currency] ? row.currency : "USD", rate: row.exchange_rate > 0 ? Number(row.exchange_rate) : null, date: row.received_on, method: row.method || "", note: row.note || "" };
+}
+
+function mapPayout(row) {
+  return { id: row.id, ownerId: row.owner_id, amount: Number(row.amount), currency: CURRENCIES[row.currency] ? row.currency : "USD", rate: row.exchange_rate > 0 ? Number(row.exchange_rate) : null, date: row.paid_on, note: row.note || "" };
 }
 
 function mapSubscription(row) {
@@ -178,7 +190,7 @@ function subscriptionBanner() {
 
 async function loadData() {
   const requestedUserId = currentUser?.id;
-  const [propertiesResult, reservationsResult, channelsResult, conversationsResult, messagesResult, templatesResult, staffResult, tasksResult, ownersResult, expensesResult, siteResult] = await Promise.all([
+  const [propertiesResult, reservationsResult, channelsResult, conversationsResult, messagesResult, templatesResult, staffResult, tasksResult, ownersResult, expensesResult, siteResult, paymentsResult, payoutsResult] = await Promise.all([
     supabase.from("properties").select("*").order("created_at", { ascending: true }),
     supabase.from("reservations").select("*").order("check_in", { ascending: true }),
     supabase.from("channels").select("*").order("created_at", { ascending: true }),
@@ -189,8 +201,12 @@ async function loadData() {
     supabase.from("tasks").select("*").order("due_date", { ascending: true }),
     supabase.from("owners").select("*").order("created_at", { ascending: true }),
     supabase.from("expenses").select("*").order("expense_date", { ascending: false }),
-    supabase.from("booking_sites").select("*").maybeSingle()
+    supabase.from("booking_sites").select("*").maybeSingle(),
+    supabase.from("payments").select("*").order("received_on", { ascending: false }),
+    supabase.from("payouts").select("*").order("paid_on", { ascending: false })
   ]);
+  cashMissing = Boolean(paymentsResult.error || payoutsResult.error);
+  if (cashMissing) console.warn("Payments unavailable. Run supabase/steps/12-currency-and-cash.sql.", paymentsResult.error || payoutsResult.error);
   if (siteResult.error) console.warn("Website unavailable. Run the direct booking section of supabase/schema.sql.", siteResult.error);
   const financeMissing = Boolean(ownersResult.error || expensesResult.error);
   if (financeMissing) console.warn("Reports unavailable. Run the owner/reporting section of supabase/schema.sql.", ownersResult.error || expensesResult.error);
@@ -215,6 +231,8 @@ async function loadData() {
     tasks: opsMissing ? [] : tasksResult.data.map(mapTask),
     owners: financeMissing ? [] : ownersResult.data.map(mapOwner),
     expenses: financeMissing ? [] : expensesResult.data.map(mapExpense),
+    payments: cashMissing ? [] : paymentsResult.data.map(mapPayment),
+    payouts: cashMissing || financeMissing ? [] : payoutsResult.data.map(mapPayout),
     site: siteResult.error ? null : mapSite(siteResult.data)
   };
   void runOps({ quiet: true });
@@ -320,7 +338,34 @@ function escapeHtml(value) {
 }
 
 function currencyCode() {
-  return document.querySelector("#currency-select").value;
+  const code = document.querySelector("#currency-select").value;
+  return CURRENCIES[code] ? code : "USD";
+}
+
+// Default JMD-per-USD rate, used only where a transaction has no rate recorded
+function fxDefault() {
+  const saved = Number(meta().fx_rate);
+  return saved > 0 ? saved : DEFAULT_RATE;
+}
+
+const rateOf = (item) => (item.rate > 0 ? item.rate : fxDefault());
+const toReport = (item) => convert(item.amount, item.currency, currencyCode(), rateOf(item));
+
+function reservationPaid(reservation) {
+  return data.payments.filter((entry) => entry.reservationId === reservation.id)
+    .reduce((sum, entry) => sum + convert(entry.amount, entry.currency, reservation.currency, rateOf(entry)), 0);
+}
+
+const reservationBalance = (reservation) => Math.max(0, Math.round((reservation.amount - reservationPaid(reservation)) * 100) / 100);
+
+// Every amount converted to the reporting currency at the rate recorded on that transaction
+function reportData() {
+  const propertyOf = new Map(data.reservations.map((entry) => [entry.id, entry.propertyId]));
+  return {
+    reservations: data.reservations.map((entry) => ({ ...entry, amount: toReport(entry), outstanding: convert(reservationBalance(entry), entry.currency, currencyCode(), rateOf(entry)) })),
+    expenses: data.expenses.map((entry) => ({ ...entry, amount: toReport(entry) })),
+    payments: data.payments.map((entry) => ({ ...entry, amount: toReport(entry), propertyId: propertyOf.get(entry.reservationId) }))
+  };
 }
 
 function displayName() {
@@ -353,19 +398,24 @@ function occupancyFor(property, today) {
 
 function storedCurrency() {
   try {
-    return localStorage.getItem(CURRENCY_KEY) || "USD";
+    const saved = localStorage.getItem(CURRENCY_KEY);
+    return CURRENCIES[saved] ? saved : "USD";
   } catch (error) {
     console.error("Could not load currency preference.", error);
     return "USD";
   }
 }
 
-function money(value) {
-  return new Intl.NumberFormat(undefined, {
-    style: "currency",
-    currency: currencyCode(),
-    maximumFractionDigits: 0
-  }).format(Number(value) || 0);
+function money(value, currency = currencyCode(), exact = false) {
+  return formatMoney(value, currency, exact);
+}
+
+// A transaction in its own currency, with the recorded rate and its value in the reporting currency
+function moneyCell(item) {
+  const reporting = currencyCode();
+  const rate = item.rate > 0 ? `${item.rate} J$/US$` : `default rate ${fxDefault()} J$/US$`;
+  const converted = item.currency === reporting ? "" : `≈ ${money(toReport(item), reporting, true)} · `;
+  return `${money(item.amount, item.currency, true)}<span class="guest-property">${converted}${escapeHtml(rate)}</span>`;
 }
 
 function parseDate(value) {
@@ -479,6 +529,13 @@ function statCard(label, value, note, icon) {
   </article>`;
 }
 
+function paymentCell(reservation) {
+  if (reservation.status === "cancelled") return "–";
+  if (!(reservation.amount > 0)) return `<span class="guest-property">No total set</span>`;
+  const balance = reservationBalance(reservation);
+  return `${money(reservationPaid(reservation), reservation.currency, true)} received<span class="guest-property ${balance > 0 ? "balance-due" : ""}">${balance > 0 ? `${money(balance, reservation.currency, true)} outstanding` : "Paid in full"}</span>${balance > 0 ? `<button class="small-button" data-action="add-payment" data-id="${escapeHtml(reservation.id)}">+ Payment</button>` : ""}`;
+}
+
 function reservationRows(reservations) {
   if (!reservations.length) return `<tr><td colspan="5"><div class="empty-state"><span class="empty-icon">▤</span><strong>No reservations yet</strong><p>Add a reservation to see it here.</p></div></td></tr>`;
   return reservations.map((reservation) => {
@@ -488,13 +545,14 @@ function reservationRows(reservations) {
       <td>${formatDate(reservation.checkIn)} – ${formatDate(reservation.checkOut)}</td>
       <td>${Number(reservation.guests) || 1} ${Number(reservation.guests) === 1 ? "guest" : "guests"}</td>
       <td><span class="status status-${escapeHtml(reservation.status)}">${escapeHtml(reservation.status)}</span></td>
-      <td>${money(reservation.amount)}</td>
+      <td>${money(reservation.amount, reservation.currency, true)}</td>
     </tr>`;
   }).join("");
 }
 
 function chartsHtml(today) {
-  const compact = (value) => new Intl.NumberFormat(undefined, { style: "currency", currency: currencyCode(), notation: "compact", maximumFractionDigits: 1 }).format(Number(value) || 0);
+  const fin = reportData();
+  const compact = (value) => `${CURRENCIES[currencyCode()]}${new Intl.NumberFormat("en-US", { notation: "compact", maximumFractionDigits: 1 }).format(Number(value) || 0)}`;
   const base = today.slice(0, 7);
   const months = [];
   for (let i = 5; i >= 0; i -= 1) {
@@ -504,7 +562,7 @@ function chartsHtml(today) {
   }
   const monthly = months.map((ym) => {
     const { start, end } = monthRange(ym);
-    return sumStats(data.properties.map((property) => propertyStats({ property, reservations: data.reservations, expenses: data.expenses, start, end })));
+    return sumStats(data.properties.map((property) => propertyStats({ property, ...fin, start, end })));
   });
   const monthLabels = months.map((ym) => new Date(`${ym}-01T00:00:00Z`).toLocaleDateString(undefined, { month: "short", timeZone: "UTC" }));
   const hasMoney = monthly.some((entry) => entry.revenue > 0 || entry.expenses > 0);
@@ -524,7 +582,7 @@ function chartsHtml(today) {
   const slices = Object.entries(counts).map(([key, value]) => ({ label: PLATFORMS[key] || key.charAt(0).toUpperCase() + key.slice(1), value, color: sourceColors[key] || COLORS.purple }));
 
   const { start, end } = monthRange(base);
-  const ranked = data.properties.map((property) => ({ label: property.name, value: propertyStats({ property, reservations: data.reservations, expenses: data.expenses, start, end }).revenue }))
+  const ranked = data.properties.map((property) => ({ label: property.name, value: propertyStats({ property, ...fin, start, end }).revenue }))
     .sort((a, b) => b.value - a.value).slice(0, 5).map((row) => ({ ...row, display: money(row.value) }));
 
   const empty = (text) => `<div class="empty-state"><strong>${text}</strong><p>Add reservations to see this chart.</p></div>`;
@@ -546,7 +604,7 @@ function renderOverview() {
     .filter((reservation) => reservation.status !== "cancelled" && reservation.checkOut >= today)
     .sort((a, b) => a.checkIn.localeCompare(b.checkIn));
   const confirmedBookings = upcoming.filter((reservation) => reservation.status === "confirmed");
-  const expectedRevenue = confirmedBookings.reduce((total, reservation) => total + (Number(reservation.amount) || 0), 0);
+  const expectedRevenue = confirmedBookings.reduce((total, reservation) => total + toReport(reservation), 0);
   const nextSevenDays = data.reservations.filter((reservation) => {
     const days = (parseDate(reservation.checkIn) - parseDate(today)) / 86400000;
     return reservation.status !== "cancelled" && days >= 0 && days <= 7;
@@ -660,8 +718,11 @@ function renderSettings() {
       <section class="panel">
         <div class="panel-heading"><div><h2>Preferences</h2><p>Saved to your account, so they follow you across devices.</p></div></div>
         <form id="prefs-form" class="settings-form" novalidate>
-          <div class="field"><label for="s-currency">Display currency</label>
-            <select id="s-currency" name="currency">${["USD", "JMD", "GBP", "EUR", "CAD"].map((code) => `<option ${code === currencyCode() ? "selected" : ""}>${code}</option>`).join("")}</select></div>
+          <div class="field"><label for="s-currency">Reporting currency</label>
+            <select id="s-currency" name="currency">${currencyChoices.map(([code, label]) => `<option value="${code}" ${code === currencyCode() ? "selected" : ""}>${label}</option>`).join("")}</select></div>
+          <div class="field"><label for="s-fx">Default exchange rate (J$ per US$1)</label>
+            <input id="s-fx" name="fx_rate" type="number" min="0.0001" step="0.0001" value="${fxDefault()}" required>
+            <span class="guest-property">Used only where a transaction has no rate recorded. Each booking, payment, expense and payout stores its own rate.</span></div>
           <div class="field"><label for="s-start">Open on this page after sign-in</label>
             <select id="s-start" name="start_view">${Object.entries(START_VIEWS).map(([key, label]) => `<option value="${key}" ${key === (info.start_view || "overview") ? "selected" : ""}>${label}</option>`).join("")}</select></div>
           <div class="settings-actions full"><button class="button button-primary" type="submit">Save preferences</button></div>
@@ -761,7 +822,9 @@ viewRoot.addEventListener("submit", async (event) => {
     } else if (form.id === "prefs-form") {
       localStorage.setItem(CURRENCY_KEY, values.currency);
       document.querySelector("#currency-select").value = values.currency;
-      await saveMeta({ currency: values.currency, start_view: values.start_view }, "Preferences saved.");
+      const fx = Number(values.fx_rate);
+      if (!(fx > 0)) { showToast("Enter an exchange rate above zero."); return; }
+      if (await saveMeta({ currency: values.currency, fx_rate: fx, start_view: values.start_view }, "Preferences saved.")) render();
     } else if (form.id === "password-form") {
       if (values.password !== values.confirm) { showToast("Passwords don’t match."); return; }
       const { error } = await supabase.auth.updateUser({ password: values.password });
@@ -803,7 +866,7 @@ function renderReservations() {
         </select>
       </div>
     </div>
-    <section class="panel"><div class="table-wrap"><table><thead><tr><th>GUEST</th><th>DATES</th><th>PARTY</th><th>STATUS</th><th>TOTAL</th><th></th></tr></thead>
+    <section class="panel"><div class="table-wrap"><table><thead><tr><th>GUEST</th><th>DATES</th><th>PARTY</th><th>STATUS</th><th>TOTAL</th><th>PAYMENTS</th><th></th></tr></thead>
       <tbody>${filtered.length ? filtered.map((reservation) => {
         const property = propertyFor(reservation);
         return `<tr>
@@ -811,10 +874,11 @@ function renderReservations() {
           <td>${formatDate(reservation.checkIn)} – ${formatDate(reservation.checkOut)}</td>
           <td>${Number(reservation.guests) || 1} ${Number(reservation.guests) === 1 ? "guest" : "guests"}</td>
           <td><span class="status status-${escapeHtml(reservation.status)}">${escapeHtml(reservation.status)}</span></td>
-          <td>${money(reservation.amount)}</td>
+          <td>${moneyCell(reservation)}</td>
+          <td>${paymentCell(reservation)}</td>
           <td><div class="property-actions"><button class="small-button" data-action="edit-reservation" data-id="${escapeHtml(reservation.id)}">Edit</button><button class="small-button danger" data-action="delete-reservation" data-id="${escapeHtml(reservation.id)}">Remove</button></div></td>
         </tr>`;
-      }).join("") : `<tr><td colspan="6"><div class="empty-state"><span class="empty-icon">▤</span><strong>No matching reservations</strong><p>Try changing your search or add a new reservation.</p></div></td></tr>`}</tbody>
+      }).join("") : `<tr><td colspan="7"><div class="empty-state"><span class="empty-icon">▤</span><strong>No matching reservations</strong><p>Try changing your search or add a new reservation.</p></div></td></tr>`}</tbody>
     </table></div></section>`;
 }
 
@@ -852,7 +916,7 @@ function renderChannels() {
     <div class="activity-list">${pairs.map(([a, b]) => `<div class="activity-item"><span class="activity-dot conflict-dot"></span><div class="activity-copy"><strong>${escapeHtml(propertyFor(a)?.name || "Property")}</strong><p>${escapeHtml(a.guest)} (${escapeHtml(PLATFORMS[a.source] || "Direct")}, ${formatDate(a.checkIn)}–${formatDate(a.checkOut)}) overlaps ${escapeHtml(b.guest)} (${escapeHtml(PLATFORMS[b.source] || "Direct")}, ${formatDate(b.checkIn)}–${formatDate(b.checkOut)})</p></div></div>`).join("")}</div></section>` : "";
   const channelRows = data.channels.map((channel) => {
     const property = data.properties.find((entry) => entry.id === channel.propertyId);
-    const price = property ? money(property.rate * (1 + channel.priceAdjust / 100)) : "–";
+    const price = property ? money(property.rate * (1 + channel.priceAdjust / 100), "USD") : "–";
     const synced = channel.lastSyncedAt ? new Date(channel.lastSyncedAt).toLocaleString() : "Never";
     return `<tr>
       <td><span class="chip chip-${escapeHtml(channel.platform)}">${escapeHtml(PLATFORMS[channel.platform])}</span></td>
@@ -1289,6 +1353,7 @@ async function saveOpsItem(values) {
 function reportContext() {
   if (!reportMonth) reportMonth = localDate(new Date()).slice(0, 7);
   const { start, end } = monthRange(reportMonth);
+  const fin = reportData();
   const properties = data.properties.filter((property) => reportOwner === "all" || (reportOwner === "none" ? !property.ownerId : property.ownerId === reportOwner));
   const rows = properties.map((property) => {
     const owner = data.owners.find((entry) => entry.id === property.ownerId);
@@ -1296,10 +1361,14 @@ function reportContext() {
       property,
       name: property.name,
       commissionPct: owner ? (property.commissionPct ?? owner.feePct) : 0,
-      stats: propertyStats({ property, reservations: data.reservations, expenses: data.expenses, start, end })
+      stats: propertyStats({ property, ...fin, start, end })
     };
   });
-  return { start, end, rows, totals: sumStats(rows.map((row) => row.stats)) };
+  const ownerRows = rows.filter((row) => row.property.ownerId);
+  const ownerIds = new Set(ownerRows.map((row) => row.property.ownerId));
+  const monthPayouts = data.payouts.filter((entry) => ownerIds.has(entry.ownerId) && entry.date >= start && entry.date < end);
+  const cash = ownerPayoutDue(ownerRows, 0, monthPayouts.reduce((sum, entry) => sum + toReport(entry), 0));
+  return { start, end, rows, totals: sumStats(rows.map((row) => row.stats)), cash };
 }
 
 function periodLabel() {
@@ -1308,11 +1377,18 @@ function periodLabel() {
 }
 
 function renderReports() {
-  const { rows, totals, start, end } = reportContext();
+  const { rows, totals, start, end, cash } = reportContext();
   const owner = data.owners.find((entry) => entry.id === reportOwner);
   const payout = ownerPayoutRows(rows, 0, totals.expenses);
   const feeLabel = owner ? commissionLabel(rows.map((row) => row.property), owner) : "";
   const monthExpenses = data.expenses.filter((entry) => entry.date >= start && entry.date < end && rows.some((row) => row.property.id === entry.propertyId));
+  const monthPayments = data.payments.filter((entry) => {
+    const reservation = data.reservations.find((item) => item.id === entry.reservationId);
+    return entry.date >= start && entry.date < end && reservation && rows.some((row) => row.property.id === reservation.propertyId);
+  });
+  const ownerIds = new Set(rows.map((row) => row.property.ownerId).filter(Boolean));
+  const monthPayouts = data.payouts.filter((entry) => ownerIds.has(entry.ownerId) && entry.date >= start && entry.date < end);
+  const reporting = currencyCode();
   const ownerRows = data.owners.map((entry) => {
     const mine = data.properties.filter((property) => property.ownerId === entry.id);
     return `<tr><td><strong>${escapeHtml(entry.name)}</strong><span class="guest-property">${escapeHtml(entry.email || "No email")}</span></td><td>${mine.length} ${mine.length === 1 ? "property" : "properties"}</td><td>${entry.feePct}%</td>
@@ -1322,18 +1398,27 @@ function renderReports() {
     <div class="toolbar"><span class="toolbar-title">${escapeHtml(periodLabel())}</span>
       <div class="toolbar-filters"><input id="report-month" class="search-input" type="month" value="${escapeHtml(reportMonth)}" aria-label="Month">
         <select id="report-owner" class="filter-select" aria-label="Owner"><option value="all">All properties</option><option value="none" ${reportOwner === "none" ? "selected" : ""}>My own (no owner)</option>${data.owners.map((entry) => `<option value="${escapeHtml(entry.id)}" ${entry.id === reportOwner ? "selected" : ""}>${escapeHtml(entry.name)}</option>`).join("")}</select>
-        <button class="button button-secondary" data-action="add-expense">+ Add expense</button><button class="button button-primary" data-action="add-owner">+ Add owner</button></div></div>
+        <button class="button button-secondary" data-action="add-payment">+ Record payment</button><button class="button button-secondary" data-action="add-expense">+ Add expense</button><button class="button button-primary" data-action="add-owner">+ Add owner</button></div></div>
+    ${cashMissing ? `<section class="panel"><div class="empty-state"><strong>Payments and currencies need one more SQL step</strong><p>Run supabase/steps/12-currency-and-cash.sql in the Supabase SQL Editor to record payments, payouts and exchange rates.</p></div></section>` : ""}
+    <p class="note"><strong>Five different figures, never interchangeable.</strong> Revenue is earned by nights stayed, money received is cash that actually arrived, outstanding is what guests still owe, expenses are costs incurred whether or not paid, and the owner payout due is what is owed from money actually received. Everything is shown in ${escapeHtml(reporting)}, converted at the exchange rate recorded on each transaction.</p>
+    <div class="stats-grid five">
+      ${statCard("Booking revenue", money(totals.revenue), "Earned: nights stayed this month", "$")}
+      ${statCard("Money received", money(totals.received), "Payments that arrived this month", "✓")}
+      ${statCard("Outstanding", money(totals.outstanding), "Unpaid balances on stays up to month end", "!")}
+      ${statCard("Expenses incurred", money(totals.expenses), "Costs dated this month, paid or not", "−")}
+      ${statCard("Owner payouts due", money(cash.due), `Received − fee − expenses, less ${money(cash.paidOut)} already paid`, "⇄")}
+    </div>
     <div class="stats-grid">
-      ${statCard("Gross booking revenue", money(totals.revenue), "Bookings overlapping this month", "$")}
       ${statCard("Occupancy", `${totals.occupancy}%`, `${totals.nights} of ${totals.available} nights`, "◫")}
       ${statCard("ADR", money(totals.adr), "Average daily rate", "↗")}
       ${statCard("RevPAR", money(totals.revpar), "Revenue per available night", "⌂")}
+      ${statCard("Bookings", totals.bookings, "Stays overlapping this month", "▤")}
     </div>
     <div class="stats-grid">
-      ${statCard("Expenses", money(totals.expenses), "Logged this month", "−")}
-      ${statCard("Management fee", money(payout.fee), owner ? `${feeLabel} of revenue` : reportOwner === "all" ? "Owner and property rates applied" : "No owner fees apply", "%")}
-      ${statCard(owner ? "Owner net payout" : "Net income", money(payout.net), "Revenue − fee − expenses", "✓")}
-      ${statCard("Bookings", totals.bookings, "Stays overlapping this month", "▤")}
+      ${statCard("Management fee", money(payout.fee), owner ? `${feeLabel} of revenue earned` : reportOwner === "all" ? "Owner and property rates applied" : "No owner fees apply", "%")}
+      ${statCard(owner ? "Owner net (earned)" : "Net income (earned)", money(payout.net), "Revenue − fee − expenses", "✓")}
+      ${statCard("Net from cash received", money(cash.net), "Owner-managed properties, fee on money received", "⌂")}
+      ${statCard("Paid out to owners", money(cash.paidOut), "Payouts recorded this month", "⇄")}
     </div>
     <div class="stats-grid">
       ${statCard("Cleaning expenses", money(totals.cleaningExpenses), "Logged this month", "✓")}
@@ -1349,10 +1434,19 @@ function renderReports() {
       }).join("") || `<tr><td colspan="9"><div class="empty-state"><strong>No properties</strong><p>Add properties to see reports.</p></div></td></tr>`}</tbody></table></div></section>
     <section class="panel"><div class="panel-heading"><div><h2>Expenses</h2><p>${monthExpenses.length} logged in ${escapeHtml(periodLabel())}</p></div></div>
       <div class="table-wrap"><table><thead><tr><th>DATE</th><th>PROPERTY</th><th>CATEGORY</th><th>DESCRIPTION</th><th>AMOUNT</th><th></th></tr></thead><tbody>
-      ${monthExpenses.map((entry) => `<tr><td>${formatDate(entry.date)}</td><td>${escapeHtml(data.properties.find((property) => property.id === entry.propertyId)?.name || "")}</td><td>${escapeHtml(CATEGORIES[entry.category])}</td><td>${escapeHtml(entry.description)}</td><td>${money(entry.amount)}</td><td><div class="property-actions"><button class="small-button" data-action="edit-expense" data-id="${escapeHtml(entry.id)}">Edit</button><button class="small-button danger" data-action="delete-expense" data-id="${escapeHtml(entry.id)}">Remove</button></div></td></tr>`).join("") || `<tr><td colspan="6"><div class="empty-state"><strong>No expenses this month</strong><p>Log cleaning, repairs and bills to see net income.</p></div></td></tr>`}</tbody></table></div></section>
+      ${monthExpenses.map((entry) => `<tr><td>${formatDate(entry.date)}</td><td>${escapeHtml(data.properties.find((property) => property.id === entry.propertyId)?.name || "")}</td><td>${escapeHtml(CATEGORIES[entry.category])}</td><td>${escapeHtml(entry.description)}</td><td>${moneyCell(entry)}</td><td><div class="property-actions"><button class="small-button" data-action="edit-expense" data-id="${escapeHtml(entry.id)}">Edit</button><button class="small-button danger" data-action="delete-expense" data-id="${escapeHtml(entry.id)}">Remove</button></div></td></tr>`).join("") || `<tr><td colspan="6"><div class="empty-state"><strong>No expenses this month</strong><p>Log cleaning, repairs and bills to see net income.</p></div></td></tr>`}</tbody></table></div></section>
+    <section class="panel"><div class="panel-heading"><div><h2>Payments received</h2><p>${monthPayments.length} recorded in ${escapeHtml(periodLabel())}. Record deposits and balances against each reservation.</p></div></div>
+      <div class="table-wrap"><table><thead><tr><th>DATE</th><th>RESERVATION</th><th>METHOD</th><th>AMOUNT</th><th></th></tr></thead><tbody>
+      ${monthPayments.map((entry) => {
+        const reservation = data.reservations.find((item) => item.id === entry.reservationId);
+        return `<tr><td>${formatDate(entry.date)}</td><td><strong>${escapeHtml(reservation?.guest || "")}</strong><span class="guest-property">${escapeHtml(data.properties.find((property) => property.id === reservation?.propertyId)?.name || "")}${entry.note ? ` · ${escapeHtml(entry.note)}` : ""}</span></td><td>${escapeHtml(entry.method || "–")}</td><td>${moneyCell(entry)}</td><td><div class="property-actions"><button class="small-button" data-action="edit-payment" data-id="${escapeHtml(entry.id)}">Edit</button><button class="small-button danger" data-action="delete-payment" data-id="${escapeHtml(entry.id)}">Remove</button></div></td></tr>`;
+      }).join("") || `<tr><td colspan="5"><div class="empty-state"><strong>No payments this month</strong><p>Use "+ Payment" on a reservation when money arrives.</p></div></td></tr>`}</tbody></table></div></section>
+    <section class="panel"><div class="panel-heading"><div><h2>Owner payouts</h2><p>${monthPayouts.length} paid in ${escapeHtml(periodLabel())}</p></div><button class="button button-secondary" data-action="add-payout">+ Record payout</button></div>
+      <div class="table-wrap"><table><thead><tr><th>DATE</th><th>OWNER</th><th>NOTE</th><th>AMOUNT</th><th></th></tr></thead><tbody>
+      ${monthPayouts.map((entry) => `<tr><td>${formatDate(entry.date)}</td><td>${escapeHtml(data.owners.find((item) => item.id === entry.ownerId)?.name || "")}</td><td>${escapeHtml(entry.note || "–")}</td><td>${moneyCell(entry)}</td><td><div class="property-actions"><button class="small-button" data-action="edit-payout" data-id="${escapeHtml(entry.id)}">Edit</button><button class="small-button danger" data-action="delete-payout" data-id="${escapeHtml(entry.id)}">Remove</button></div></td></tr>`).join("") || `<tr><td colspan="5"><div class="empty-state"><strong>No payouts this month</strong><p>Record each transfer to an owner so "payout due" stays accurate.</p></div></td></tr>`}</tbody></table></div></section>
     <section class="panel"><div class="panel-heading"><div><h2>Property owners</h2><p>Managing units for others? Assign owners to properties (Properties → Edit) and generate statements.</p></div></div>
       <div class="table-wrap"><table><thead><tr><th>OWNER</th><th>UNITS</th><th>MGMT FEE</th><th></th></tr></thead><tbody>${ownerRows || `<tr><td colspan="4"><div class="empty-state"><strong>No owners yet</strong><p>Add an owner to charge a management fee and generate statements.</p></div></td></tr>`}</tbody></table></div></section>
-    <p class="note">Revenue is each reservation's total spread evenly across its nights. Stays imported from channels have no amount unless you edit them. Log platform commissions as an expense under Platform commissions; no rate is assumed. Management fees use each property's commission, or the owner's default. Owners can't log in yet: send them the statement (print/save as PDF, or email). Amounts show in your selected display currency without conversion.</p>`;
+    <p class="note">Revenue is each reservation's total spread evenly across its nights. Stays imported from channels have no amount unless you edit them. Log platform commissions as an expense under Platform commissions; no rate is assumed. Management fees use each property's commission, or the owner's default. Owners can't log in yet: send them the statement (print/save as PDF, or email). Reservations, payments, expenses and payouts keep their own currency (US$ or J$) and the J$-per-US$ rate you recorded; where no rate was recorded, your default rate from Settings is used. Payouts due are calculated per month and don't carry a balance forward.</p>`;
 }
 
 function commissionLabel(properties, owner) {
@@ -1363,11 +1457,16 @@ function commissionLabel(properties, owner) {
 function buildStatement(ownerId) {
   const owner = data.owners.find((entry) => entry.id === ownerId);
   const { start, end } = monthRange(reportMonth || localDate(new Date()).slice(0, 7));
-  const rows = data.properties.filter((property) => property.ownerId === ownerId).map((property) => ({ name: property.name, commissionPct: property.commissionPct, stats: propertyStats({ property, reservations: data.reservations, expenses: data.expenses, start, end }) }));
+  const fin = reportData();
+  const rows = data.properties.filter((property) => property.ownerId === ownerId).map((property) => ({ name: property.name, commissionPct: property.commissionPct, stats: propertyStats({ property, ...fin, start, end }) }));
   const totals = sumStats(rows.map((row) => row.stats));
   const payout = ownerPayoutRows(rows, owner.feePct, totals.expenses);
   const feeLabel = commissionLabel(data.properties.filter((property) => property.ownerId === ownerId), owner);
-  return { owner, rows, totals, payout, feeLabel, html: statementHtml({ owner, period: periodLabel(), rows, totals, payout, feeLabel, fmt: money, esc: escapeHtml, generated: new Date().toLocaleDateString() }) };
+  const payouts = data.payouts.filter((entry) => entry.ownerId === ownerId && entry.date >= start && entry.date < end);
+  const cash = ownerPayoutDue(rows, owner.feePct, payouts.reduce((sum, entry) => sum + toReport(entry), 0));
+  const payoutLines = payouts.map((entry) => ({ date: formatDate(entry.date), detail: `${entry.note || "Payout"} (rate ${rateOf(entry)} J$/US$)`, amount: money(entry.amount, entry.currency, true) }));
+  const note = `All figures in ${currencyCode()}, converted at the exchange rate recorded on each transaction (J$ per US$1); ${fxDefault()} is used where none was recorded. Booking revenue is earned by nights stayed; money received, outstanding balances, expenses and payouts are separate figures.`;
+  return { owner, rows, totals, payout, cash, feeLabel, html: statementHtml({ owner, period: periodLabel(), rows, totals, payout, feeLabel, cash, payoutLines, note, fmt: money, esc: escapeHtml, generated: new Date().toLocaleDateString() }) };
 }
 
 async function saveFinanceItem(values) {
@@ -1382,17 +1481,37 @@ async function saveFinanceItem(values) {
       if (error) throw error;
       const owner = mapOwner(row);
       data.owners = editor.id ? data.owners.map((entry) => entry.id === owner.id ? owner : entry) : [...data.owners, owner];
-    } else {
-      const payload = { property_id: values.propertyId, category: values.category, description: values.description.trim(), amount: Number(values.amount), expense_date: values.date };
-      const request = editor.id ? supabase.from("expenses").update(payload).eq("id", editor.id) : supabase.from("expenses").insert({ ...payload, user_id: currentUser.id });
+    } else if (type === "payment") {
+      const payload = { reservation_id: values.reservationId, amount: Number(values.amount), currency: values.currency, exchange_rate: Number(values.rate) || null, received_on: values.date, method: values.method, note: (values.note || "").trim() };
+      const request = editor.id ? supabase.from("payments").update(payload).eq("id", editor.id) : supabase.from("payments").insert({ ...payload, user_id: currentUser.id });
       const { data: row, error } = await request.select("*").single();
+      if (error) throw error;
+      const payment = mapPayment(row);
+      data.payments = editor.id ? data.payments.map((entry) => entry.id === payment.id ? payment : entry) : [payment, ...data.payments];
+    } else if (type === "payout") {
+      const payload = { owner_id: values.ownerId, amount: Number(values.amount), currency: values.currency, exchange_rate: Number(values.rate) || null, paid_on: values.date, note: (values.note || "").trim() };
+      const request = editor.id ? supabase.from("payouts").update(payload).eq("id", editor.id) : supabase.from("payouts").insert({ ...payload, user_id: currentUser.id });
+      const { data: row, error } = await request.select("*").single();
+      if (error) throw error;
+      const payout = mapPayout(row);
+      data.payouts = editor.id ? data.payouts.map((entry) => entry.id === payout.id ? payout : entry) : [payout, ...data.payouts];
+    } else {
+      const payload = { property_id: values.propertyId, category: values.category, description: values.description.trim(), amount: Number(values.amount), expense_date: values.date, currency: values.currency, exchange_rate: Number(values.rate) || null };
+      const send = (body) => (editor.id ? supabase.from("expenses").update(body).eq("id", editor.id) : supabase.from("expenses").insert({ ...body, user_id: currentUser.id })).select("*").single();
+      let { data: row, error } = await send(payload);
+      if (error && /column|schema cache/i.test(error.message || "")) {
+        delete payload.currency;
+        delete payload.exchange_rate;
+        ({ data: row, error } = await send(payload));
+        if (!error) showToast("Saved without currency. Run supabase/steps/12-currency-and-cash.sql to record currencies and rates.");
+      }
       if (error) throw error;
       const expense = mapExpense(row);
       data.expenses = editor.id ? data.expenses.map((entry) => entry.id === expense.id ? expense : entry) : [expense, ...data.expenses];
     }
     dialog.close();
     render();
-    showToast(type === "owner" ? "Owner saved." : "Expense saved.");
+    showToast({ owner: "Owner saved.", payment: "Payment recorded.", payout: "Payout recorded." }[type] || "Expense saved.");
   } catch (error) {
     console.error(`Could not save ${type}.`, error);
     showToast(error.message || `Could not save ${type}.`);
@@ -1410,10 +1529,10 @@ function siteUrl() {
 function renderWebsite() {
   const site = data.site;
   const requests = data.reservations.filter((entry) => entry.source === "direct" && entry.status === "pending" && /^Direct booking request/.test(entry.notes));
-  const directRevenue = data.reservations.filter((entry) => entry.source === "direct" && entry.status === "confirmed").reduce((total, entry) => total + (entry.amount || 0), 0);
+  const directRevenue = data.reservations.filter((entry) => entry.source === "direct" && entry.status === "confirmed").reduce((total, entry) => total + toReport(entry), 0);
   const listedCount = data.properties.filter((property) => property.listed).length;
   const slugGuess = (displayName() || "my-stays").toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 30) || "my-stays";
-  const propertyRows = data.properties.map((property) => `<tr><td><strong>${escapeHtml(property.name)}</strong><span class="guest-property">${escapeHtml(property.location)} · ${money(property.rate)} / night</span></td>
+  const propertyRows = data.properties.map((property) => `<tr><td><strong>${escapeHtml(property.name)}</strong><span class="guest-property">${escapeHtml(property.location)} · ${money(property.rate, "USD")} / night</span></td>
     <td><span class="status status-${property.listed ? "confirmed" : "cancelled"}">${property.listed ? "On website" : isBookable(property) ? "Hidden" : PROPERTY_STATUSES[property.status]}</span></td>
     <td><button class="small-button" data-action="toggle-listed" data-id="${escapeHtml(property.id)}" ${site && isBookable(property) ? "" : "disabled"} ${isBookable(property) ? "" : `title="Only active properties can be listed"`}>${property.listed ? "Hide" : "Show on website"}</button></td></tr>`).join("");
   viewRoot.innerHTML = `
@@ -1440,7 +1559,7 @@ function renderWebsite() {
     <section class="panel"><div class="panel-heading"><div><h2>Booking requests</h2><p>Guests who asked to book through your website. Confirming blocks the dates on all channels.</p></div></div>
       <div class="table-wrap"><table><thead><tr><th>GUEST</th><th>DATES</th><th>TOTAL</th><th></th></tr></thead><tbody>
       ${requests.map((entry) => `<tr><td><strong>${escapeHtml(entry.guest)}</strong><span class="guest-property">${escapeHtml(entry.email)}${entry.phone ? ` · ${escapeHtml(entry.phone)}` : ""} · ${escapeHtml(propertyFor(entry)?.name || "")}</span></td>
-        <td>${formatDate(entry.checkIn)} – ${formatDate(entry.checkOut)}</td><td>${money(entry.amount)}</td>
+        <td>${formatDate(entry.checkIn)} – ${formatDate(entry.checkOut)}</td><td>${money(entry.amount, entry.currency, true)}</td>
         <td><div class="property-actions"><button class="small-button" data-action="approve-request" data-id="${escapeHtml(entry.id)}">Confirm</button><button class="small-button danger" data-action="decline-request" data-id="${escapeHtml(entry.id)}">Decline</button></div></td></tr>`).join("") || `<tr><td colspan="4"><div class="empty-state"><span class="empty-icon">✉</span><strong>No requests waiting</strong><p>New website bookings will appear here.</p></div></td></tr>`}</tbody></table></div></section>
     <section class="panel"><div class="panel-heading"><div><h2>Properties on your website</h2><p>Choose which properties guests can see and book.</p></div></div>
       <div class="table-wrap"><table><thead><tr><th>PROPERTY</th><th>STATUS</th><th></th></tr></thead><tbody>${propertyRows || `<tr><td colspan="3"><div class="empty-state"><strong>No properties yet</strong><p>Add a property first.</p></div></td></tr>`}</tbody></table></div></section>
@@ -1506,8 +1625,8 @@ function renderPropertyProfile(property) {
       ${tile("Max guests", property.maxGuests)}
       ${tile("Check-in", formatTime(property.checkInTime), "from")}
       ${tile("Check-out", formatTime(property.checkOutTime), "by")}
-      ${tile("Nightly rate", money(property.rate))}
-      ${tile("Cleaning fee", property.cleaningFee ? money(property.cleaningFee) : "None", "per stay")}
+      ${tile("Nightly rate", money(property.rate, "USD"))}
+      ${tile("Cleaning fee", property.cleaningFee ? money(property.cleaningFee, "USD") : "None", "per stay")}
       ${tile("Commission", commission === null ? "Own property" : `${commission}%`, owner && property.commissionPct === null ? "owner's default" : owner ? "set for this property" : "")}
     </div>
     <div class="profile-columns">
@@ -1544,7 +1663,7 @@ function renderProperties() {
         <div class="property-content">
           <div class="property-title-row"><h3>${escapeHtml(property.name)}</h3>${statusBadge(property)}</div>
           <p class="property-location">${escapeHtml(property.location)}</p>
-          <div class="property-meta"><span>Nightly rate</span><strong>${money(property.rate)}</strong></div>
+          <div class="property-meta"><span>Nightly rate</span><strong>${money(property.rate, "USD")}</strong></div>
           <div class="property-meta"><span>Upcoming stays</span><strong>${bookings}</strong></div>
           <div class="property-actions">
             <button class="small-button" data-action="view-profile" data-id="${escapeHtml(property.id)}">View profile</button>
@@ -1554,6 +1673,16 @@ function renderProperties() {
         </div>
       </article>`;
     }).join("")}</div>` : `<section class="panel"><div class="empty-state"><span class="empty-icon">⌂</span><strong>${data.properties.length ? "No properties found" : "Add your first property"}</strong><p>${data.properties.length ? "Try another search." : "Create a property to start organizing your stays."}</p></div></section>`}`;
+}
+
+const currencyChoices = Object.keys(CURRENCIES).map((code) => [code, code === "USD" ? "US dollars (USD)" : "Jamaican dollars (JMD)"]);
+
+// Currency of the transaction plus the J$-per-US$ rate on that day
+function fxFields(item) {
+  return [
+    field("currency", "Currency", "select", item?.currency || "USD", { choices: currencyChoices }),
+    field("rate", "Exchange rate (J$ per US$1)", "number", item?.rate ?? fxDefault(), { min: 0.0001, step: "0.0001" })
+  ].join("");
 }
 
 function field(name, label, type, value = "", options = {}) {
@@ -1600,8 +1729,14 @@ function openEditor(type, item = null) {
     navTo("properties");
     return;
   }
+  if ((type === "payment" || type === "payout") && cashMissing) {
+    showToast("Run supabase/steps/12-currency-and-cash.sql in Supabase first.");
+    return;
+  }
+  if (type === "payment" && !data.reservations.length) { showToast("Add a reservation before recording a payment."); navTo("reservations"); return; }
+  if (type === "payout" && !data.owners.length) { showToast("Add an owner before recording a payout."); return; }
   editor = { type, id: item?.id || null };
-  const editing = Boolean(item);
+  const editing = Boolean(item?.id);
   document.querySelector("#dialog-eyebrow").textContent = editing ? "UPDATE DETAILS" : "GET STARTED";
   document.querySelector("#dialog-title").textContent = `${editing ? "Edit" : "Add"} ${type}`;
   document.querySelector("#save-button").textContent = `${editing ? "Save" : "Add"} ${type}`;
@@ -1615,10 +1750,10 @@ function openEditor(type, item = null) {
       field("bedrooms", "Bedrooms", "number", item?.bedrooms ?? 1, { min: 1, step: 1 }),
       field("bathrooms", "Bathrooms", "number", item?.bathrooms ?? 1, { min: 0, step: "0.5" }),
       field("maxGuests", "Maximum guests", "number", item?.maxGuests ?? 2, { min: 1, step: 1 }),
-      field("rate", "Nightly rate", "number", item?.rate ?? "", { min: 0, step: "0.01" }),
+      field("rate", "Nightly rate (US$)", "number", item?.rate ?? "", { min: 0, step: "0.01" }),
       field("checkInTime", "Check-in time", "time", item?.checkInTime || "15:00"),
       field("checkOutTime", "Check-out time", "time", item?.checkOutTime || "11:00"),
-      field("cleaningFee", "Cleaning fee", "number", item?.cleaningFee ?? 0, { min: 0, step: "0.01" }),
+      field("cleaningFee", "Cleaning fee (US$)", "number", item?.cleaningFee ?? 0, { min: 0, step: "0.01" }),
       field("commissionPct", "Commission % (blank = owner default)", "number", item?.commissionPct ?? "", { required: false, min: 0, step: "0.1" }),
       field("ownerId", "Property owner (if you manage it for someone else)", "select", item?.ownerId || "", { full: true, required: false, choices: [["", "Me (my own property)"], ...data.owners.map((entry) => [entry.id, entry.name])] }),
       `<div class="field full"><label>Assigned cleaners</label><div class="check-list">${data.staff.filter((member) => member.role === "cleaner" && (member.active || item?.cleanerIds.includes(member.id))).map((member) => `<label class="check-item"><input type="checkbox" name="cleaner" value="${escapeHtml(member.id)}" ${item?.cleanerIds.includes(member.id) ? "checked" : ""}> ${escapeHtml(member.name)}</label>`).join("") || `<span class="hint">Add cleaners in Operations first, then assign them here.</span>`}</div></div>`,
@@ -1640,8 +1775,27 @@ function openEditor(type, item = null) {
       field("propertyId", "Property", "select", item?.propertyId || data.properties[0].id, { choices: data.properties.map((property) => [property.id, property.name]) }),
       field("category", "Category", "select", item?.category || "cleaning", { choices: Object.entries(CATEGORIES) }),
       field("amount", "Amount", "number", item?.amount ?? "", { min: 0, step: "0.01" }),
+      fxFields(item),
       field("date", "Date", "date", item?.date || dateOffset(0)),
-      field("description", "Description", "text", item?.description, { full: true, required: false, placeholder: "e.g. Plumber – kitchen tap" })
+      field("description", "Description", "text", item?.description, { full: true, required: false, placeholder: "e.g. Plumber – kitchen tap (paid in J$)" })
+    ].join("");
+  } else if (type === "payment") {
+    const reservations = data.reservations.filter((entry) => entry.status !== "cancelled" || entry.id === item?.reservationId);
+    formFields.innerHTML = [
+      field("reservationId", "Reservation", "select", item?.reservationId || reservations[0]?.id, { full: true, choices: reservations.map((entry) => [entry.id, `${entry.guest} · ${data.properties.find((property) => property.id === entry.propertyId)?.name || ""} · ${formatDate(entry.checkIn)} (balance ${money(reservationBalance(entry), entry.currency, true)})`]) }),
+      field("amount", "Amount received", "number", item?.amount ?? "", { min: 0.01, step: "0.01" }),
+      fxFields(item),
+      field("date", "Date received", "date", item?.date || dateOffset(0)),
+      field("method", "Method", "select", item?.method || "Bank transfer", { choices: ["Bank transfer", "Cash", "Card", "Online (platform payout)", "Other"].map((entry) => [entry, entry]) }),
+      field("note", "Note (optional)", "text", item?.note, { full: true, required: false, placeholder: "e.g. 50% deposit" })
+    ].join("");
+  } else if (type === "payout") {
+    formFields.innerHTML = [
+      field("ownerId", "Owner", "select", item?.ownerId || data.owners[0].id, { full: true, choices: data.owners.map((entry) => [entry.id, entry.name]) }),
+      field("amount", "Amount paid to owner", "number", item?.amount ?? "", { min: 0.01, step: "0.01" }),
+      fxFields(item),
+      field("date", "Date paid", "date", item?.date || dateOffset(0)),
+      field("note", "Note (optional)", "text", item?.note, { full: true, required: false, placeholder: "e.g. March payout, bank ref 1234" })
     ].join("");
   } else if (type === "staff") {
     formFields.innerHTML = [
@@ -1692,6 +1846,7 @@ function openEditor(type, item = null) {
       field("checkIn", "Check-in", "date", item?.checkIn || dateOffset(1)),
       field("checkOut", "Check-out", "date", item?.checkOut || dateOffset(2)),
       field("amount", "Reservation total", "number", item?.amount ?? "", { min: 0, step: "0.01" }),
+      fxFields(item),
       field("status", "Status", "select", item?.status || "confirmed", { choices: [["confirmed", "Confirmed"], ["pending", "Pending"], ["cancelled", "Cancelled"]] }),
       field("phone", "Phone (optional)", "tel", item?.phone, { required: false }),
       field("notes", "Notes (optional)", "textarea", item?.notes, { full: true, required: false })
@@ -1711,7 +1866,7 @@ async function saveEditor(event) {
     document.querySelector("#field-checkOut").setCustomValidity("");
     return;
   }
-  if (editor.type === "owner" || editor.type === "expense") {
+  if (["owner", "expense", "payment", "payout"].includes(editor.type)) {
     await saveFinanceItem(values);
     return;
   }
@@ -1756,6 +1911,8 @@ async function saveEditor(event) {
     check_out: values.checkOut,
     guests: Number(values.guests),
     amount: Number(values.amount),
+    currency: values.currency,
+    exchange_rate: Number(values.rate) || null,
     status: values.status,
     notes: values.notes.trim()
   };
@@ -1786,6 +1943,11 @@ async function saveEditor(event) {
       ({ data: savedRow, error } = await send(payload));
       partialSave = true;
       if (!error) showToast("Saved. Run supabase/steps/9-property-profile.sql to store the full profile.");
+    } else if (error && !isProperty && !isChannel && /column|schema cache/i.test(error.message || "")) {
+      for (const key of ["currency", "exchange_rate"]) delete payload[key];
+      ({ data: savedRow, error } = await send(payload));
+      partialSave = true;
+      if (!error) showToast("Saved without currency. Run supabase/steps/12-currency-and-cash.sql to record currencies and rates.");
     }
     if (error) throw error;
     if (isChannel) {
@@ -1860,6 +2022,24 @@ async function handleAction(event) {
     const item = data.expenses.find((entry) => entry.id === id);
     if (item) openEditor("expense", item);
   }
+  if (action === "add-payment") {
+    const reservation = data.reservations.find((entry) => entry.id === id);
+    openEditor("payment", reservation ? { reservationId: reservation.id, amount: reservationBalance(reservation) || "", currency: reservation.currency, rate: reservation.rate } : null);
+  }
+  if (action === "add-payout") openEditor("payout");
+  if (action === "edit-payment" || action === "edit-payout") {
+    const item = (action === "edit-payment" ? data.payments : data.payouts).find((entry) => entry.id === id);
+    if (item) openEditor(action === "edit-payment" ? "payment" : "payout", item);
+  }
+  if (action === "delete-payment" || action === "delete-payout") {
+    const isPayment = action === "delete-payment";
+    if (!window.confirm(isPayment ? "Remove this payment? The reservation's balance goes back up." : "Remove this payout? The owner's payout due goes back up.")) return;
+    const { error } = await supabase.from(isPayment ? "payments" : "payouts").delete().eq("id", id);
+    if (error) { showToast(error.message || "Could not remove."); return; }
+    if (isPayment) data.payments = data.payments.filter((entry) => entry.id !== id);
+    else data.payouts = data.payouts.filter((entry) => entry.id !== id);
+    render();
+  }
   if (action === "delete-owner") {
     if (!window.confirm("Remove this owner? Their properties become your own.")) return;
     const { error } = await supabase.from("owners").delete().eq("id", id);
@@ -1885,7 +2065,7 @@ async function handleAction(event) {
       setTimeout(() => URL.revokeObjectURL(url), 60000);
     } else {
       const otherExpenses = statement.totals.expenses - statement.totals.cleaningExpenses - statement.totals.maintenanceExpenses - statement.totals.platformCommissions;
-      const text = `Hi ${statement.owner.name},\n\nYour ${periodLabel()} statement:\nGross booking revenue: ${money(statement.totals.revenue)}\nOccupancy: ${statement.totals.occupancy}%\nAverage daily rate (ADR): ${money(statement.totals.adr)}\nCleaning expenses: ${money(statement.totals.cleaningExpenses)}\nMaintenance expenses: ${money(statement.totals.maintenanceExpenses)}\nPlatform commissions: ${money(statement.totals.platformCommissions)}${otherExpenses ? `\nOther expenses: ${money(otherExpenses)}` : ""}\nManagement fee (${statement.feeLabel}): ${money(statement.payout.fee)}\nNet payout to owner: ${money(statement.payout.net)}`;
+      const text = `Hi ${statement.owner.name},\n\nYour ${periodLabel()} statement:\nGross booking revenue: ${money(statement.totals.revenue)}\nOccupancy: ${statement.totals.occupancy}%\nAverage daily rate (ADR): ${money(statement.totals.adr)}\nCleaning expenses: ${money(statement.totals.cleaningExpenses)}\nMaintenance expenses: ${money(statement.totals.maintenanceExpenses)}\nPlatform commissions: ${money(statement.totals.platformCommissions)}${otherExpenses ? `\nOther expenses: ${money(otherExpenses)}` : ""}\nManagement fee (${statement.feeLabel}): ${money(statement.payout.fee)}\nNet payout to owner (earned): ${money(statement.payout.net)}\n\nMoney received: ${money(statement.cash.received)}\nOutstanding payments: ${money(statement.totals.outstanding)}\nPayouts already made: ${money(statement.cash.paidOut)}\nOwner payout due: ${money(statement.cash.due)}\n(All in ${currencyCode()}, at the rate recorded on each transaction.)`;
       window.location.href = `mailto:${statement.owner.email}?subject=${encodeURIComponent(`Owner statement – ${periodLabel()}`)}&body=${encodeURIComponent(text)}`;
     }
   }
