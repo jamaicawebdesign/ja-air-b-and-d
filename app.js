@@ -5,7 +5,7 @@ import { SUPABASE_KEY, SUPABASE_URL } from "./supabase-config.js";
 import { PLANS, subscriptionState } from "./plans.js";
 import { PLATFORMS, findConflicts, parseIcal } from "./ical.js";
 import { COLORS, barChart, donutChart, lineChart, rankBars } from "./charts.js";
-import { CATEGORIES, monthRange, ownerPayout, ownerPayoutRows, propertyStats, statementHtml, sumStats } from "./reports.js";
+import { CATEGORIES, monthRange, ownerPayoutRows, propertyStats, statementHtml, sumStats } from "./reports.js";
 import { KINDS, ROLES, STATUSES, isOverdue, notifyLink, pickCleaner, smsLink, turnoversToCreate } from "./ops.js";
 import { CHANNELS, STARTER_TEMPLATES, TRIGGERS, deliveryLink, dueMessages, fillTemplate, matchAutoReply } from "./inbox.js";
 
@@ -1290,7 +1290,15 @@ function reportContext() {
   if (!reportMonth) reportMonth = localDate(new Date()).slice(0, 7);
   const { start, end } = monthRange(reportMonth);
   const properties = data.properties.filter((property) => reportOwner === "all" || (reportOwner === "none" ? !property.ownerId : property.ownerId === reportOwner));
-  const rows = properties.map((property) => ({ property, name: property.name, commissionPct: property.commissionPct, stats: propertyStats({ property, reservations: data.reservations, expenses: data.expenses, start, end }) }));
+  const rows = properties.map((property) => {
+    const owner = data.owners.find((entry) => entry.id === property.ownerId);
+    return {
+      property,
+      name: property.name,
+      commissionPct: owner ? (property.commissionPct ?? owner.feePct) : 0,
+      stats: propertyStats({ property, reservations: data.reservations, expenses: data.expenses, start, end })
+    };
+  });
   return { start, end, rows, totals: sumStats(rows.map((row) => row.stats)) };
 }
 
@@ -1302,7 +1310,7 @@ function periodLabel() {
 function renderReports() {
   const { rows, totals, start, end } = reportContext();
   const owner = data.owners.find((entry) => entry.id === reportOwner);
-  const payout = owner ? ownerPayoutRows(rows, owner.feePct, totals.expenses) : ownerPayout(totals.revenue, totals.expenses, 0);
+  const payout = ownerPayoutRows(rows, 0, totals.expenses);
   const feeLabel = owner ? commissionLabel(rows.map((row) => row.property), owner) : "";
   const monthExpenses = data.expenses.filter((entry) => entry.date >= start && entry.date < end && rows.some((row) => row.property.id === entry.propertyId));
   const ownerRows = data.owners.map((entry) => {
@@ -1316,26 +1324,35 @@ function renderReports() {
         <select id="report-owner" class="filter-select" aria-label="Owner"><option value="all">All properties</option><option value="none" ${reportOwner === "none" ? "selected" : ""}>My own (no owner)</option>${data.owners.map((entry) => `<option value="${escapeHtml(entry.id)}" ${entry.id === reportOwner ? "selected" : ""}>${escapeHtml(entry.name)}</option>`).join("")}</select>
         <button class="button button-secondary" data-action="add-expense">+ Add expense</button><button class="button button-primary" data-action="add-owner">+ Add owner</button></div></div>
     <div class="stats-grid">
-      ${statCard("Revenue", money(totals.revenue), "Gross, nights in this month", "$")}
+      ${statCard("Gross booking revenue", money(totals.revenue), "Bookings overlapping this month", "$")}
       ${statCard("Occupancy", `${totals.occupancy}%`, `${totals.nights} of ${totals.available} nights`, "◫")}
       ${statCard("ADR", money(totals.adr), "Average daily rate", "↗")}
       ${statCard("RevPAR", money(totals.revpar), "Revenue per available night", "⌂")}
     </div>
     <div class="stats-grid">
       ${statCard("Expenses", money(totals.expenses), "Logged this month", "−")}
-      ${statCard("Management fee", money(payout.fee), owner ? `${feeLabel} of revenue` : "Pick an owner to apply a fee", "%")}
+      ${statCard("Management fee", money(payout.fee), owner ? `${feeLabel} of revenue` : reportOwner === "all" ? "Owner and property rates applied" : "No owner fees apply", "%")}
       ${statCard(owner ? "Owner net payout" : "Net income", money(payout.net), "Revenue − fee − expenses", "✓")}
       ${statCard("Bookings", totals.bookings, "Stays overlapping this month", "▤")}
     </div>
+    <div class="stats-grid">
+      ${statCard("Cleaning expenses", money(totals.cleaningExpenses), "Logged this month", "✓")}
+      ${statCard("Maintenance expenses", money(totals.maintenanceExpenses), "Logged this month", "⚒")}
+      ${statCard("Platform commissions", money(totals.platformCommissions), "Logged this month", "%")}
+      ${statCard("Other expenses", money(totals.expenses - totals.cleaningExpenses - totals.maintenanceExpenses - totals.platformCommissions), "Utilities, supplies and more", "−")}
+    </div>
     <section class="panel"><div class="panel-heading"><div><h2>By property</h2><p>Performance for ${escapeHtml(periodLabel())}</p></div></div>
-      <div class="table-wrap"><table><thead><tr><th>PROPERTY</th><th>OCCUPANCY</th><th>ADR</th><th>REVENUE</th><th>EXPENSES</th><th>NET</th></tr></thead><tbody>
-      ${rows.map((row) => `<tr><td><strong>${escapeHtml(row.name)}</strong><span class="guest-property">${escapeHtml(data.owners.find((entry) => entry.id === row.property.ownerId)?.name || "Own property")}</span></td><td>${row.stats.occupancy}%</td><td>${money(row.stats.adr)}</td><td>${money(row.stats.revenue)}</td><td>${money(row.stats.expenses)}</td><td>${money(row.stats.revenue - row.stats.expenses)}</td></tr>`).join("") || `<tr><td colspan="6"><div class="empty-state"><strong>No properties</strong><p>Add properties to see reports.</p></div></td></tr>`}</tbody></table></div></section>
+      <div class="table-wrap"><table><thead><tr><th>PROPERTY</th><th>OCCUPANCY</th><th>ADR</th><th>GROSS REVENUE</th><th>CLEANING</th><th>MAINTENANCE</th><th>PLATFORM COMMISSIONS</th><th>MGMT FEE</th><th>NET</th></tr></thead><tbody>
+      ${rows.map((row) => {
+        const fee = row.stats.revenue * ((row.commissionPct || 0) / 100);
+        return `<tr><td><strong>${escapeHtml(row.name)}</strong><span class="guest-property">${escapeHtml(data.owners.find((entry) => entry.id === row.property.ownerId)?.name || "Own property")}</span></td><td>${row.stats.occupancy}%</td><td>${money(row.stats.adr)}</td><td>${money(row.stats.revenue)}</td><td>${money(row.stats.cleaningExpenses)}</td><td>${money(row.stats.maintenanceExpenses)}</td><td>${money(row.stats.platformCommissions)}</td><td>${money(fee)}</td><td>${money(row.stats.revenue - row.stats.expenses - fee)}</td></tr>`;
+      }).join("") || `<tr><td colspan="9"><div class="empty-state"><strong>No properties</strong><p>Add properties to see reports.</p></div></td></tr>`}</tbody></table></div></section>
     <section class="panel"><div class="panel-heading"><div><h2>Expenses</h2><p>${monthExpenses.length} logged in ${escapeHtml(periodLabel())}</p></div></div>
       <div class="table-wrap"><table><thead><tr><th>DATE</th><th>PROPERTY</th><th>CATEGORY</th><th>DESCRIPTION</th><th>AMOUNT</th><th></th></tr></thead><tbody>
       ${monthExpenses.map((entry) => `<tr><td>${formatDate(entry.date)}</td><td>${escapeHtml(data.properties.find((property) => property.id === entry.propertyId)?.name || "")}</td><td>${escapeHtml(CATEGORIES[entry.category])}</td><td>${escapeHtml(entry.description)}</td><td>${money(entry.amount)}</td><td><div class="property-actions"><button class="small-button" data-action="edit-expense" data-id="${escapeHtml(entry.id)}">Edit</button><button class="small-button danger" data-action="delete-expense" data-id="${escapeHtml(entry.id)}">Remove</button></div></td></tr>`).join("") || `<tr><td colspan="6"><div class="empty-state"><strong>No expenses this month</strong><p>Log cleaning, repairs and bills to see net income.</p></div></td></tr>`}</tbody></table></div></section>
     <section class="panel"><div class="panel-heading"><div><h2>Property owners</h2><p>Managing units for others? Assign owners to properties (Properties → Edit) and generate statements.</p></div></div>
       <div class="table-wrap"><table><thead><tr><th>OWNER</th><th>UNITS</th><th>MGMT FEE</th><th></th></tr></thead><tbody>${ownerRows || `<tr><td colspan="4"><div class="empty-state"><strong>No owners yet</strong><p>Add an owner to charge a management fee and generate statements.</p></div></td></tr>`}</tbody></table></div></section>
-    <p class="note">Revenue is each reservation's total spread evenly across its nights. Stays imported from channels have no amount unless you edit them. Owners can't log in yet: send them the statement (print/save as PDF, or email). Amounts show in your selected display currency without conversion.</p>`;
+    <p class="note">Revenue is each reservation's total spread evenly across its nights. Stays imported from channels have no amount unless you edit them. Log platform commissions as an expense under Platform commissions; no rate is assumed. Management fees use each property's commission, or the owner's default. Owners can't log in yet: send them the statement (print/save as PDF, or email). Amounts show in your selected display currency without conversion.</p>`;
 }
 
 function commissionLabel(properties, owner) {
@@ -1867,7 +1884,8 @@ async function handleAction(event) {
       window.open(url, "_blank", "noopener");
       setTimeout(() => URL.revokeObjectURL(url), 60000);
     } else {
-      const text = `Hi ${statement.owner.name},\n\nYour ${periodLabel()} statement:\nRevenue: ${money(statement.totals.revenue)}\nManagement fee (${statement.feeLabel}): ${money(statement.payout.fee)}\nExpenses: ${money(statement.totals.expenses)}\nNet payout: ${money(statement.payout.net)}\nOccupancy: ${statement.totals.occupancy}%  ADR: ${money(statement.totals.adr)}`;
+      const otherExpenses = statement.totals.expenses - statement.totals.cleaningExpenses - statement.totals.maintenanceExpenses - statement.totals.platformCommissions;
+      const text = `Hi ${statement.owner.name},\n\nYour ${periodLabel()} statement:\nGross booking revenue: ${money(statement.totals.revenue)}\nOccupancy: ${statement.totals.occupancy}%\nAverage daily rate (ADR): ${money(statement.totals.adr)}\nCleaning expenses: ${money(statement.totals.cleaningExpenses)}\nMaintenance expenses: ${money(statement.totals.maintenanceExpenses)}\nPlatform commissions: ${money(statement.totals.platformCommissions)}${otherExpenses ? `\nOther expenses: ${money(otherExpenses)}` : ""}\nManagement fee (${statement.feeLabel}): ${money(statement.payout.fee)}\nNet payout to owner: ${money(statement.payout.net)}`;
       window.location.href = `mailto:${statement.owner.email}?subject=${encodeURIComponent(`Owner statement – ${periodLabel()}`)}&body=${encodeURIComponent(text)}`;
     }
   }

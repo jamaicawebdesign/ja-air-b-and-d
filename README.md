@@ -119,3 +119,7 @@ Run `supabase/steps/9-property-profile.sql`. Each property gets a profile page (
 ### Property status
 
 Run `supabase/steps/10-property-status.sql`. Each property is Active, Inactive, Maintenance or Archived (set in the property form, shown as a badge on cards and the profile). Only Active properties can be listed on the booking website (a database trigger enforces this). Archived properties are hidden from the list by default (use the status filter), the calendar and new reservation/channel forms, but their history stays in reports.
+
+### Financial report breakdown
+
+Run `supabase/steps/11-financial-breakdown.sql` to add the Platform commissions expense category. Reports and owner statements show gross booking revenue, occupancy, ADR, cleaning and maintenance expenses, platform commissions, management fees and net payout. Platform commissions are entered as expenses; Havenstay does not assume a commission rate.
