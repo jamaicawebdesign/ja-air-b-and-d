@@ -5,7 +5,7 @@ import { SUPABASE_KEY, SUPABASE_URL } from "./supabase-config.js";
 import { PLANS, subscriptionState } from "./plans.js";
 import { PLATFORMS, findConflicts, parseIcal } from "./ical.js";
 import { COLORS, barChart, donutChart, lineChart, rankBars } from "./charts.js";
-import { CATEGORIES, monthRange, ownerPayout, propertyStats, statementHtml, sumStats } from "./reports.js";
+import { CATEGORIES, monthRange, ownerPayout, ownerPayoutRows, propertyStats, statementHtml, sumStats } from "./reports.js";
 import { KINDS, ROLES, STATUSES, isOverdue, notifyLink, pickCleaner, smsLink, turnoversToCreate } from "./ops.js";
 import { CHANNELS, STARTER_TEMPLATES, TRIGGERS, deliveryLink, dueMessages, fillTemplate, matchAutoReply } from "./inbox.js";
 
@@ -62,7 +62,15 @@ function mapProperty(row) {
     ownerId: row.owner_id || null,
     listed: Boolean(row.listed),
     photos: Array.isArray(row.photos) ? row.photos : [],
-    amenities: Array.isArray(row.amenities) ? row.amenities : []
+    amenities: Array.isArray(row.amenities) ? row.amenities : [],
+    address: row.address || "",
+    bathrooms: row.bathrooms == null ? 1 : Number(row.bathrooms),
+    maxGuests: row.max_guests || 2,
+    checkInTime: row.check_in_time || "15:00",
+    checkOutTime: row.check_out_time || "11:00",
+    cleaningFee: Number(row.cleaning_fee) || 0,
+    commissionPct: row.commission_pct == null ? null : Number(row.commission_pct),
+    cleanerIds: Array.isArray(row.cleaner_ids) ? row.cleaner_ids : []
   };
 }
 
@@ -1198,7 +1206,8 @@ async function runOps({ quiet = false } = {}) {
     for (const reservation of pending) {
       const property = propertyFor(reservation);
       if (!property) continue;
-      const cleaner = pickCleaner(data.staff, data.tasks);
+      const assigned = property.cleanerIds.length ? data.staff.filter((member) => property.cleanerIds.includes(member.id)) : data.staff;
+      const cleaner = pickCleaner(assigned, data.tasks) || pickCleaner(data.staff, data.tasks);
       const { data: row, error } = await supabase.from("tasks").insert({
         user_id: currentUser.id, property_id: property.id, reservation_id: reservation.id, staff_id: cleaner?.id || null,
         kind: "cleaning", title: `Turnover clean after ${reservation.guest}`, due_date: reservation.checkOut, auto: true,
@@ -1280,7 +1289,7 @@ function reportContext() {
   if (!reportMonth) reportMonth = localDate(new Date()).slice(0, 7);
   const { start, end } = monthRange(reportMonth);
   const properties = data.properties.filter((property) => reportOwner === "all" || (reportOwner === "none" ? !property.ownerId : property.ownerId === reportOwner));
-  const rows = properties.map((property) => ({ property, name: property.name, stats: propertyStats({ property, reservations: data.reservations, expenses: data.expenses, start, end }) }));
+  const rows = properties.map((property) => ({ property, name: property.name, commissionPct: property.commissionPct, stats: propertyStats({ property, reservations: data.reservations, expenses: data.expenses, start, end }) }));
   return { start, end, rows, totals: sumStats(rows.map((row) => row.stats)) };
 }
 
@@ -1292,8 +1301,8 @@ function periodLabel() {
 function renderReports() {
   const { rows, totals, start, end } = reportContext();
   const owner = data.owners.find((entry) => entry.id === reportOwner);
-  const feePct = owner ? owner.feePct : 0;
-  const payout = ownerPayout(totals.revenue, totals.expenses, feePct);
+  const payout = owner ? ownerPayoutRows(rows, owner.feePct, totals.expenses) : ownerPayout(totals.revenue, totals.expenses, 0);
+  const feeLabel = owner ? commissionLabel(rows.map((row) => row.property), owner) : "";
   const monthExpenses = data.expenses.filter((entry) => entry.date >= start && entry.date < end && rows.some((row) => row.property.id === entry.propertyId));
   const ownerRows = data.owners.map((entry) => {
     const mine = data.properties.filter((property) => property.ownerId === entry.id);
@@ -1313,7 +1322,7 @@ function renderReports() {
     </div>
     <div class="stats-grid">
       ${statCard("Expenses", money(totals.expenses), "Logged this month", "−")}
-      ${statCard("Management fee", money(payout.fee), owner ? `${feePct}% of revenue` : "Pick an owner to apply a fee", "%")}
+      ${statCard("Management fee", money(payout.fee), owner ? `${feeLabel} of revenue` : "Pick an owner to apply a fee", "%")}
       ${statCard(owner ? "Owner net payout" : "Net income", money(payout.net), "Revenue − fee − expenses", "✓")}
       ${statCard("Bookings", totals.bookings, "Stays overlapping this month", "▤")}
     </div>
@@ -1328,13 +1337,19 @@ function renderReports() {
     <p class="note">Revenue is each reservation's total spread evenly across its nights. Stays imported from channels have no amount unless you edit them. Owners can't log in yet: send them the statement (print/save as PDF, or email). Amounts show in your selected display currency without conversion.</p>`;
 }
 
+function commissionLabel(properties, owner) {
+  const rates = new Set(properties.map((property) => property.commissionPct ?? owner.feePct));
+  return rates.size === 1 ? `${[...rates][0]}%` : "rates vary by property";
+}
+
 function buildStatement(ownerId) {
   const owner = data.owners.find((entry) => entry.id === ownerId);
   const { start, end } = monthRange(reportMonth || localDate(new Date()).slice(0, 7));
-  const rows = data.properties.filter((property) => property.ownerId === ownerId).map((property) => ({ name: property.name, stats: propertyStats({ property, reservations: data.reservations, expenses: data.expenses, start, end }) }));
+  const rows = data.properties.filter((property) => property.ownerId === ownerId).map((property) => ({ name: property.name, commissionPct: property.commissionPct, stats: propertyStats({ property, reservations: data.reservations, expenses: data.expenses, start, end }) }));
   const totals = sumStats(rows.map((row) => row.stats));
-  const payout = ownerPayout(totals.revenue, totals.expenses, owner.feePct);
-  return { owner, rows, totals, payout, html: statementHtml({ owner, period: periodLabel(), rows, totals, payout, fmt: money, esc: escapeHtml, generated: new Date().toLocaleDateString() }) };
+  const payout = ownerPayoutRows(rows, owner.feePct, totals.expenses);
+  const feeLabel = commissionLabel(data.properties.filter((property) => property.ownerId === ownerId), owner);
+  return { owner, rows, totals, payout, feeLabel, html: statementHtml({ owner, period: periodLabel(), rows, totals, payout, feeLabel, fmt: money, esc: escapeHtml, generated: new Date().toLocaleDateString() }) };
 }
 
 async function saveFinanceItem(values) {
@@ -1430,7 +1445,64 @@ async function saveSite(event) {
   showToast("Website saved.");
 }
 
+let profileId = null;
+
+function formatTime(value) {
+  const [hours, minutes] = String(value || "").split(":").map(Number);
+  if (Number.isNaN(hours)) return "—";
+  return `${hours % 12 || 12}:${String(minutes || 0).padStart(2, "0")} ${hours < 12 ? "AM" : "PM"}`;
+}
+
+function renderPropertyProfile(property) {
+  const owner = data.owners.find((entry) => entry.id === property.ownerId);
+  const commission = owner ? (property.commissionPct ?? owner.feePct) : null;
+  const cleaners = data.staff.filter((member) => property.cleanerIds.includes(member.id));
+  const channels = data.channels.filter((channel) => channel.propertyId === property.id);
+  const today = localDate(new Date());
+  const upcoming = data.reservations.filter((entry) => entry.propertyId === property.id && entry.status !== "cancelled" && entry.checkOut >= today).sort((a, b) => a.checkIn.localeCompare(b.checkIn)).slice(0, 5);
+  const baths = Number(property.bathrooms);
+  const tile = (label, value, note = "") => `<div class="profile-tile"><span>${label}</span><strong>${value}</strong>${note ? `<small>${note}</small>` : ""}</div>`;
+  const photos = property.photos.length
+    ? `<div class="profile-gallery"><img id="profile-main-photo" class="profile-main" src="${escapeHtml(property.photos[0])}" alt="${escapeHtml(property.name)}">
+        ${property.photos.length > 1 ? `<div class="profile-thumbs">${property.photos.map((url, index) => `<button type="button" class="profile-thumb${index === 0 ? " active" : ""}" data-action="profile-photo" data-url="${escapeHtml(url)}" aria-label="Show photo ${index + 1}"><img src="${escapeHtml(url)}" alt=""></button>`).join("")}</div>` : ""}</div>`
+    : `<div class="profile-gallery empty"><div class="property-art art-0" style="height:220px"><span class="property-art-label">No photos yet</span></div></div>`;
+  viewRoot.innerHTML = `
+    <div class="toolbar"><button class="small-button" data-action="close-profile">← All properties</button>
+      <div class="property-actions"><button class="small-button" data-action="edit-property" data-id="${escapeHtml(property.id)}">Edit profile</button><button class="small-button danger" data-action="delete-property" data-id="${escapeHtml(property.id)}">Remove</button></div></div>
+    <section class="panel profile-hero">
+      ${photos}
+      <div class="profile-head"><h2>${escapeHtml(property.name)}</h2>
+        <p class="property-location">${escapeHtml([property.address, property.location].filter(Boolean).join(", "))}</p>
+        ${property.description ? `<p class="profile-desc">${escapeHtml(property.description)}</p>` : ""}
+        ${property.amenities.length ? `<div class="chip-row">${property.amenities.map((entry) => `<span class="chip">${escapeHtml(entry)}</span>`).join("")}</div>` : ""}</div>
+    </section>
+    <div class="profile-tiles">
+      ${tile("Bedrooms", Number(property.bedrooms))}
+      ${tile("Bathrooms", Number.isInteger(baths) ? baths : baths.toFixed(1))}
+      ${tile("Max guests", property.maxGuests)}
+      ${tile("Check-in", formatTime(property.checkInTime), "from")}
+      ${tile("Check-out", formatTime(property.checkOutTime), "by")}
+      ${tile("Nightly rate", money(property.rate))}
+      ${tile("Cleaning fee", property.cleaningFee ? money(property.cleaningFee) : "None", "per stay")}
+      ${tile("Commission", commission === null ? "Own property" : `${commission}%`, owner && property.commissionPct === null ? "owner's default" : owner ? "set for this property" : "")}
+    </div>
+    <div class="profile-columns">
+      <section class="panel"><div class="panel-heading"><div><h2>Owner</h2><p>Who this property is managed for</p></div></div>
+        <div class="profile-body">${owner ? `<strong>${escapeHtml(owner.name)}</strong><p>${escapeHtml([owner.email, owner.phone].filter(Boolean).join(" · ") || "No contact details")}</p>` : `<p>Your own property. No owner statements or management fee apply.</p>`}</div></section>
+      <section class="panel"><div class="panel-heading"><div><h2>Assigned cleaners</h2><p>Turnover cleans go to this team first</p></div></div>
+        <div class="profile-body">${cleaners.length ? cleaners.map((member) => `<p><strong>${escapeHtml(member.name)}</strong>${member.phone ? ` · ${escapeHtml(member.phone)}` : ""}${member.active ? "" : " (inactive)"}</p>`).join("") : `<p>None assigned. Cleans are shared across all active cleaners. Use Edit profile to assign some.</p>`}</div></section>
+      <section class="panel"><div class="panel-heading"><div><h2>Connected channels</h2><p>Where this property is listed</p></div></div>
+        <div class="profile-body">${channels.length ? channels.map((channel) => `<p><span class="chip chip-${escapeHtml(channel.platform)}" style="margin-left:0">${escapeHtml(PLATFORMS[channel.platform] || channel.platform)}</span> <small>${escapeHtml(channel.lastStatus)}${channel.priceAdjust ? ` · rate ${channel.priceAdjust > 0 ? "+" : ""}${channel.priceAdjust}%` : ""}</small></p>`).join("") : `<p>No channels connected yet.</p>`}
+          <button class="small-button" data-navigate="channels">Manage channels</button></div></section>
+      <section class="panel"><div class="panel-heading"><div><h2>Upcoming stays</h2><p>Next guests at this property</p></div></div>
+        <div class="profile-body">${upcoming.length ? upcoming.map((entry) => `<p><strong>${escapeHtml(entry.guest)}</strong> · ${formatDate(entry.checkIn)} – ${formatDate(entry.checkOut)} · ${escapeHtml(PLATFORMS[entry.source] || "Direct")}</p>`).join("") : `<p>No upcoming stays.</p>`}</div></section>
+    </div>`;
+}
+
 function renderProperties() {
+  const profile = profileId && data.properties.find((entry) => entry.id === profileId);
+  if (profile) { renderPropertyProfile(profile); return; }
+  profileId = null;
   const query = (document.querySelector("#property-search")?.value || "").trim().toLowerCase();
   const filtered = data.properties.filter((property) => `${property.name} ${property.location}`.toLowerCase().includes(query));
   viewRoot.innerHTML = `
@@ -1449,7 +1521,8 @@ function renderProperties() {
           <div class="property-meta"><span>Nightly rate</span><strong>${money(property.rate)}</strong></div>
           <div class="property-meta"><span>Upcoming stays</span><strong>${bookings}</strong></div>
           <div class="property-actions">
-            <button class="small-button" data-action="edit-property" data-id="${escapeHtml(property.id)}">Edit details</button>
+            <button class="small-button" data-action="view-profile" data-id="${escapeHtml(property.id)}">View profile</button>
+            <button class="small-button" data-action="edit-property" data-id="${escapeHtml(property.id)}">Edit</button>
             <button class="small-button danger" data-action="delete-property" data-id="${escapeHtml(property.id)}">Remove</button>
           </div>
         </div>
@@ -1472,6 +1545,7 @@ function field(name, label, type, value = "", options = {}) {
 }
 
 const MAX_PHOTOS = 6;
+const PROFILE_COLUMNS = ["address", "bathrooms", "max_guests", "check_in_time", "check_out_time", "cleaning_fee", "commission_pct", "cleaner_ids"];
 let editorPhotos = [];
 
 function renderPhotoManager() {
@@ -1510,9 +1584,17 @@ function openEditor(type, item = null) {
     formFields.innerHTML = [
       field("name", "Property name", "text", item?.name, { full: true, placeholder: "e.g. Seaside cottage" }),
       field("location", "Location", "text", item?.location, { full: true, placeholder: "City, country" }),
+      field("address", "Street address", "text", item?.address, { full: true, required: false, placeholder: "e.g. 12 Beach Road, Negril" }),
       field("bedrooms", "Bedrooms", "number", item?.bedrooms ?? 1, { min: 1, step: 1 }),
+      field("bathrooms", "Bathrooms", "number", item?.bathrooms ?? 1, { min: 0, step: "0.5" }),
+      field("maxGuests", "Maximum guests", "number", item?.maxGuests ?? 2, { min: 1, step: 1 }),
       field("rate", "Nightly rate", "number", item?.rate ?? "", { min: 0, step: "0.01" }),
+      field("checkInTime", "Check-in time", "time", item?.checkInTime || "15:00"),
+      field("checkOutTime", "Check-out time", "time", item?.checkOutTime || "11:00"),
+      field("cleaningFee", "Cleaning fee", "number", item?.cleaningFee ?? 0, { min: 0, step: "0.01" }),
+      field("commissionPct", "Commission % (blank = owner default)", "number", item?.commissionPct ?? "", { required: false, min: 0, step: "0.1" }),
       field("ownerId", "Property owner (if you manage it for someone else)", "select", item?.ownerId || "", { full: true, required: false, choices: [["", "Me (my own property)"], ...data.owners.map((entry) => [entry.id, entry.name])] }),
+      `<div class="field full"><label>Assigned cleaners</label><div class="check-list">${data.staff.filter((member) => member.role === "cleaner" && (member.active || item?.cleanerIds.includes(member.id))).map((member) => `<label class="check-item"><input type="checkbox" name="cleaner" value="${escapeHtml(member.id)}" ${item?.cleanerIds.includes(member.id) ? "checked" : ""}> ${escapeHtml(member.name)}</label>`).join("") || `<span class="hint">Add cleaners in Operations first, then assign them here.</span>`}</div></div>`,
       field("description", "Description", "textarea", item?.description, { full: true, required: false, placeholder: "A few details about your place" }),
       field("amenities", "Amenities (comma separated)", "text", (item?.amenities || []).join(", "), { full: true, required: false, placeholder: "WiFi, Pool, Air conditioning, Parking" }),
       `<div class="field full"><label for="field-photoFiles">Photos (up to ${MAX_PHOTOS}, first one is the cover)</label><div id="photo-manager" class="photo-manager"></div><input id="field-photoFiles" name="photoFiles" type="file" accept="image/*" multiple></div>`
@@ -1628,7 +1710,15 @@ async function saveEditor(event) {
     bedrooms: Number(values.bedrooms),
     rate: Number(values.rate),
     description: values.description.trim(),
-    owner_id: values.ownerId || null
+    owner_id: values.ownerId || null,
+    address: values.address.trim(),
+    bathrooms: Number(values.bathrooms) || 0,
+    max_guests: Number(values.maxGuests) || 1,
+    check_in_time: values.checkInTime || "15:00",
+    check_out_time: values.checkOutTime || "11:00",
+    cleaning_fee: Number(values.cleaningFee) || 0,
+    commission_pct: values.commissionPct === "" ? null : Number(values.commissionPct),
+    cleaner_ids: [...form.querySelectorAll('input[name="cleaner"]:checked')].map((box) => box.value)
   } : {
     property_id: values.propertyId,
     guest: values.guest.trim(),
@@ -1657,10 +1747,18 @@ async function saveEditor(event) {
         payload.amenities = amenities;
       }
     }
-    const request = editor.id
-      ? supabase.from(table).update(payload).eq("id", editor.id)
-      : supabase.from(table).insert({ ...payload, user_id: currentUser.id });
-    const { data: savedRow, error } = await request.select("*").single();
+    const send = (body) => (editor.id
+      ? supabase.from(table).update(body).eq("id", editor.id)
+      : supabase.from(table).insert({ ...body, user_id: currentUser.id })).select("*").single();
+    let partialSave = false;
+    let { data: savedRow, error } = await send(payload);
+    if (error && isProperty && /column|schema cache/i.test(error.message || "")) {
+      // The profile SQL (step 9) hasn't been run yet: save the basics so nothing is lost
+      for (const key of PROFILE_COLUMNS) delete payload[key];
+      ({ data: savedRow, error } = await send(payload));
+      partialSave = true;
+      if (!error) showToast("Saved. Run supabase/steps/9-property-profile.sql to store the full profile.");
+    }
     if (error) throw error;
     if (isChannel) {
       const channel = mapChannel(savedRow);
@@ -1680,7 +1778,7 @@ async function saveEditor(event) {
     }
     dialog.close();
     render();
-    showToast(`${isProperty ? "Property" : isChannel ? "Channel" : "Reservation"} ${editor.id ? "updated" : "added"}.`);
+    if (!partialSave) showToast(`${isProperty ? "Property" : isChannel ? "Channel" : "Reservation"} ${editor.id ? "updated" : "added"}.`);
     if (isChannel && savedRow.ical_url) void syncAll({ quiet: true });
   } catch (error) {
     console.error(`Could not save ${editor.type}.`, error);
@@ -1758,7 +1856,7 @@ async function handleAction(event) {
       window.open(url, "_blank", "noopener");
       setTimeout(() => URL.revokeObjectURL(url), 60000);
     } else {
-      const text = `Hi ${statement.owner.name},\n\nYour ${periodLabel()} statement:\nRevenue: ${money(statement.totals.revenue)}\nManagement fee (${statement.owner.feePct}%): ${money(statement.payout.fee)}\nExpenses: ${money(statement.totals.expenses)}\nNet payout: ${money(statement.payout.net)}\nOccupancy: ${statement.totals.occupancy}%  ADR: ${money(statement.totals.adr)}`;
+      const text = `Hi ${statement.owner.name},\n\nYour ${periodLabel()} statement:\nRevenue: ${money(statement.totals.revenue)}\nManagement fee (${statement.feeLabel}): ${money(statement.payout.fee)}\nExpenses: ${money(statement.totals.expenses)}\nNet payout: ${money(statement.payout.net)}\nOccupancy: ${statement.totals.occupancy}%  ADR: ${money(statement.totals.adr)}`;
       window.location.href = `mailto:${statement.owner.email}?subject=${encodeURIComponent(`Owner statement – ${periodLabel()}`)}&body=${encodeURIComponent(text)}`;
     }
   }
@@ -1888,6 +1986,12 @@ async function handleAction(event) {
     render();
     showToast("Channel disconnected.");
   }
+  if (action === "view-profile") { profileId = id; renderProperties(); window.scrollTo(0, 0); }
+  if (action === "close-profile") { profileId = null; renderProperties(); }
+  if (action === "profile-photo") {
+    document.querySelector("#profile-main-photo").src = actionButton.dataset.url;
+    document.querySelectorAll(".profile-thumb").forEach((thumb) => thumb.classList.toggle("active", thumb === actionButton));
+  }
   if (action === "edit-property") {
     const item = data.properties.find((property) => property.id === id);
     if (item) openEditor("property", item);
@@ -1927,7 +2031,7 @@ async function handleAction(event) {
   }
 }
 
-document.querySelectorAll(".nav-link").forEach((link) => link.addEventListener("click", () => navTo(link.dataset.view)));
+document.querySelectorAll(".nav-link").forEach((link) => link.addEventListener("click", () => { profileId = null; navTo(link.dataset.view); }));
 setInterval(() => { if (currentUser) { void syncAll({ quiet: true }); void runAutomations({ quiet: true }); void runOps({ quiet: true }); } }, 15 * 60 * 1000);
 document.querySelector("#add-property-button").addEventListener("click", () => openEditor("property"));
 document.querySelector("#add-reservation-button").addEventListener("click", () => openEditor("reservation"));
