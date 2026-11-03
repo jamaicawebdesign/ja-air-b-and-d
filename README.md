@@ -131,3 +131,6 @@ Run `supabase/steps/12-currency-and-cash.sql` once (after steps 1 and 5). It add
 - **Five separate figures** on the Reports page: booking revenue (earned by nights stayed), money received (payments dated in the month), outstanding (unpaid balances on stays that began by month end), expenses incurred, and owner payouts due (money received − management fee − expenses − payouts already made, calculated per month).
 - Record money against a reservation with **+ Payment** on the Reservations page, and transfers to owners with **+ Record payout** on Reports. Owner statements include the same cash position.
 - Until step 12 is run, the app still works and saves without currency data.
+
+## Mobile use
+The dashboard is built for phones as well as desks (tested at 390px wide): a bottom tab bar replaces the sidebar, tables reflow into labelled cards, all controls are at least 44px tall with 16px text (so iOS doesn't zoom), dialogs have sticky Save/Cancel buttons, and cleaners can change a task's status, add a photo and message staff from the Operations page. The multi-calendar scrolls sideways inside its own box.

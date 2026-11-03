@@ -519,7 +519,16 @@ function render() {
   if (currentView === "settings") renderSettings();
   const banner = subscriptionBanner();
   if (banner) viewRoot.insertAdjacentHTML("afterbegin", banner);
+  labelTableCells();
   updateConflictBadge();
+}
+
+// Lets tables reflow into labelled cards on phones
+function labelTableCells() {
+  viewRoot.querySelectorAll("table").forEach((table) => {
+    const heads = [...table.querySelectorAll("thead th")].map((cell) => cell.textContent.trim());
+    table.querySelectorAll("tbody tr").forEach((row) => [...row.children].forEach((cell, index) => cell.setAttribute("data-label", heads[index] || "")));
+  });
 }
 
 function statCard(label, value, note, icon) {
@@ -2116,6 +2125,8 @@ async function handleAction(event) {
       void supabase.from("conversations").update({ unread: 0 }).eq("id", id);
     }
     render();
+    // On phones the thread sits below the list, so bring it into view
+    if (window.matchMedia("(max-width: 800px)").matches) viewRoot.querySelector(".inbox-thread")?.scrollIntoView({ block: "start", behavior: "smooth" });
   }
   if (action === "mark-sent") {
     const { error } = await supabase.from("messages").update({ status: "sent" }).eq("id", id);
