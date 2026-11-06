@@ -1,3 +1,4 @@
+import './analytics.js';
 import { createClient } from "@supabase/supabase-js";
 import { PAYMENT } from "./payment-config.js";
 import { SUPABASE_KEY, SUPABASE_URL } from "./supabase-config.js";

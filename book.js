@@ -1,5 +1,6 @@
 "use strict";
 
+import './analytics.js';
 import { createClient } from "@supabase/supabase-js";
 import { SUPABASE_KEY, SUPABASE_URL } from "./supabase-config.js";
 import { DEMO_SITE, demoBusy } from "./demo-data.js";

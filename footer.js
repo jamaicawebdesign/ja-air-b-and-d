@@ -1,3 +1,5 @@
+import './analytics.js';
+
 // Add your real profile URLs here; empty ones are hidden.
 const SOCIAL = [
   ["WhatsApp", "https://wa.me/18765497399", "M16 3a13 13 0 0 0-11 19.900L3 29l6.300-2A13 13 0 1 0 16 3zm0 2.400a10.600 10.600 0 1 1-5.500 19.700l-.4-.2-3.700 1.200 1.200-3.600-.3-.4A10.600 10.600 0 0 1 16 5.400z"],
